@@ -38,7 +38,7 @@ install -D -p -m 0755 target/release/virtiofsd %{buildroot}%{_libexecdir}/virtio
 install -D -p -m 0644 50-qemu-virtiofsd.json %{buildroot}%{_datadir}/qemu/vhost-user/50-qemu-virtiofsd.json
 
 %files
-%license LICENSE-APACHE LICENSE-BSD-3-Clause
+%license LICENSE-APACHE LICENSE-BSD-3-Clause THIRD_PARTY_LICENSES.txt olm/SECURITY.md
 %doc README.md
 %{_libexecdir}/virtiofsd
 %{_datadir}/qemu/vhost-user/50-qemu-virtiofsd.json
