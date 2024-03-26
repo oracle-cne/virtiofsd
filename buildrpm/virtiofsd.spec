@@ -6,8 +6,7 @@ Name:	      %{_name}
 Version:      {{{$version}}} 
 Release:      1%{?dist}
 Vendor:	      Oracle America
-Summary:      A virtio-fs vhost-user device daemon
-written in Rust. 
+Summary:      A virtio-fs vhost-user device daemon written in Rust.
 Url:          https://gitlab.com/virtio-fs/virtiofsd
 # Upstream license specification: Apache-2.0 AND BSD-3-Clause
 License:      Apache-2.0 AND BSD-3-Clause
