@@ -3,7 +3,7 @@ import com.oracle.olcne.pipeline.BranchPattern
 
 olcnePipeline(
         branchPattern: new BranchPattern(master: 'oracle/release/{{{ .major }}}.{{{ .minor }}}.{{{ .patch }}}', feature: 'feature/.*'),
-        platforms: [ 'ol8'],
+        platforms: [ 'ol8', 'ol9'],
         publishImage: true,
         yumOL8Repos: ['ol8_appstream'],
         yumOL9Repos: ['ol9_appstream'],
