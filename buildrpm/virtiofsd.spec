@@ -2,21 +2,23 @@
 
 %global _name virtiofsd 
 
-Name:	      %{_name}
-Version:      {{{$version}}} 
-Release:      1%{?dist}
-Vendor:	      Oracle America
-Summary:      A virtio-fs vhost-user device daemon written in Rust.
-Url:          https://gitlab.com/virtio-fs/virtiofsd
+Name:	       %{_name}
+Version:       {{{$version}}}
+Release:       1%{?dist}
+Vendor:	       Oracle America
+Summary:       A virtio-fs vhost-user device daemon written in Rust.
+Url:           https://gitlab.com/virtio-fs/virtiofsd
 # Upstream license specification: Apache-2.0 AND BSD-3-Clause
-License:      Apache-2.0 AND BSD-3-Clause
+License:       Apache-2.0 AND BSD-3-Clause
+
+Source0:       %{name}-%{version}.tar.bz2
 
 BuildRequires: libselinux-devel
 BuildRequires: libseccomp-devel
 
 BuildRequires: rust-toolset
 
-Obsoletes: qemu-virtiofsd
+Obsoletes:     qemu-virtiofsd
 
 %description
 This package provides virtiofsd daemon. This program is a vhost-user backend
