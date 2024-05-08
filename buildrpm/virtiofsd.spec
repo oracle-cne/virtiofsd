@@ -10,6 +10,7 @@
 %endif
 
 %global _name virtiofsd 
+%global _buildhost build-ol%{?oraclelinux}-%{?_arch}.oracle.com
 
 Name:	       %{_name}
 Version:       {{{$version}}}
