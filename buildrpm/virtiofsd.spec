@@ -12,6 +12,12 @@
 %global _name virtiofsd 
 %global _buildhost build-ol%{?oraclelinux}-%{?_arch}.oracle.com
 
+{{{- if semverCompare ">1.8.0" $version }}}
+%global virtiofsd_json 50-virtiofsd.json
+{{{- else }}}
+%global virtiofsd_json 50-qemu-virtiofsd.json
+{{{- end }}}
+
 Name:	       %{_name}
 Version:       {{{$version}}}
 Release:       1%{?dist}
@@ -43,13 +49,13 @@ tree with a guest.
 %install
 mkdir -p %{buildroot}%{_libexecdir}
 install -D -p -m 0755 target/release/virtiofsd %{buildroot}%{_libexecdir}/virtiofsd
-install -D -p -m 0644 50-qemu-virtiofsd.json %{buildroot}%{_datadir}/qemu/vhost-user/50-qemu-virtiofsd.json
+install -D -p -m 0644 %{virtiofsd_json} %{buildroot}%{_datadir}/qemu/vhost-user/%{virtiofsd_json}
 
 %files
 %license LICENSE-APACHE LICENSE-BSD-3-Clause THIRD_PARTY_LICENSES.txt olm/SECURITY.md
 %doc README.md
 %{_libexecdir}/virtiofsd
-%{_datadir}/qemu/vhost-user/50-qemu-virtiofsd.json
+%{_datadir}/qemu/vhost-user/%{virtiofsd_json}
 
 %changelog
 * {{{.changelog_timestamp}}} - {{{$version}}}-1
