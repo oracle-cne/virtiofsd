@@ -1,0 +1,11 @@
+@Library('olcne-pipeline') _
+import com.oracle.olcne.pipeline.BranchPattern
+
+olcnePipeline(
+        branchPattern: new BranchPattern(master: 'oracle/release/1.10.1', feature: 'feature/.*'),
+        platforms: [ 'ol8', 'ol9'],
+        yumOL8Repos: ['ol8_appstream'],
+        yumOL9Repos: ['ol9_appstream'],
+        architectures: ['x86_64', 'aarch64'],
+)
+
