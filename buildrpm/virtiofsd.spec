@@ -39,7 +39,7 @@ tree with a guest.
 %setup -q -n %{name}-%{version}
 
 %build
-%cargo_build
+cargo build --release
 
 %install
 mkdir -p %{buildroot}%{_libexecdir}
