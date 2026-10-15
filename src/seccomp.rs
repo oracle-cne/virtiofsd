@@ -123,6 +123,7 @@ pub fn enable_seccomp(action: SeccompAction, allow_remote_logging: bool) -> Resu
     allow_syscall!(ctx, libc::SYS_geteuid);
     allow_syscall!(ctx, libc::SYS_getpid);
     allow_syscall!(ctx, libc::SYS_getrandom);
+    allow_syscall!(ctx, libc::SYS_getsockopt); // used by vhost to validate the backend request socket
     allow_syscall!(ctx, libc::SYS_gettid);
     allow_syscall!(ctx, libc::SYS_gettimeofday);
     allow_syscall!(ctx, libc::SYS_getxattr);
@@ -181,6 +182,7 @@ pub fn enable_seccomp(action: SeccompAction, allow_remote_logging: bool) -> Resu
     //allow_syscall!(ctx, libc::SYS_setresuid32);  Needed on some platforms
     allow_syscall!(ctx, libc::SYS_set_robust_list);
     allow_syscall!(ctx, libc::SYS_setxattr);
+    allow_syscall!(ctx, libc::SYS_shutdown); // used by vhost-user-backend on disconnect
     allow_syscall!(ctx, libc::SYS_sigaltstack);
     #[cfg(target_arch = "s390x")]
     allow_syscall!(ctx, libc::SYS_sigreturn);
