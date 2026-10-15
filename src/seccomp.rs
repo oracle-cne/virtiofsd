@@ -58,6 +58,26 @@ macro_rules! allow_syscall {
     };
 }
 
+#[cfg(feature = "postcopy")]
+macro_rules! allow_ioctl {
+    ($ctx:ident, $request:expr) => {
+        let syscall_nr: i32 = libc::SYS_ioctl.try_into().unwrap();
+        // Only the low 32 bits: musl sign-extends the request into the upper ones.
+        let cmp = libseccomp_sys::scmp_arg_cmp {
+            arg: 1,
+            op: libseccomp_sys::scmp_compare::SCMP_CMP_MASKED_EQ,
+            datum_a: 0xffff_ffff,
+            datum_b: $request as u32 as u64,
+        };
+        let ret = unsafe {
+            libseccomp_sys::seccomp_rule_add_array($ctx, SCMP_ACT_ALLOW, syscall_nr, 1, &cmp)
+        };
+        if ret != 0 {
+            return Err(Error::AllowSeccompSyscall(syscall_nr));
+        }
+    };
+}
+
 pub fn enable_seccomp(action: SeccompAction, allow_remote_logging: bool) -> Result<(), Error> {
     let ctx = unsafe { seccomp_init(action.into()) };
     if ctx.is_null() {
@@ -210,6 +230,14 @@ pub fn enable_seccomp(action: SeccompAction, allow_remote_logging: bool) -> Resu
 
     if allow_remote_logging {
         allow_syscall!(ctx, libc::SYS_sendto); // Required by syslog
+    }
+
+    #[cfg(feature = "postcopy")]
+    {
+        allow_ioctl!(ctx, libc::_IO(0xAA, 0x00)); // USERFAULTFD_IOC_NEW
+        allow_ioctl!(ctx, libc::_IOWR::<[u64; 3]>(0xAA, 0x3F)); // UFFDIO_API
+        allow_ioctl!(ctx, libc::_IOWR::<[u64; 4]>(0xAA, 0x00)); // UFFDIO_REGISTER
+        allow_syscall!(ctx, libc::SYS_userfaultfd);
     }
 
     let ret = unsafe { seccomp_load(ctx) };

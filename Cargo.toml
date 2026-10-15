@@ -17,6 +17,7 @@ default = ["seccomp"]
 seccomp = ["dep:libseccomp-sys"]
 # Enabling Xen support will _disable_ QEMU/KVM support!
 xen = ["vhost-user-backend/xen", "vhost/xen", "vm-memory/xen"]
+postcopy = ["vhost-user-backend/postcopy"]
 
 [[bin]]
 name = "virtiofsd"
