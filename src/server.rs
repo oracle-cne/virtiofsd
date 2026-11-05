@@ -10,9 +10,10 @@ use crate::filesystem::{
 use crate::fuse::*;
 use crate::passthrough::util::einval;
 use crate::soft_idmap::GuestGid;
+use crate::util::bytes_to_cstr;
 use crate::{oslib, Error, Result};
 use std::convert::{TryFrom, TryInto};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
@@ -1568,12 +1569,6 @@ fn reply_error(e: io::Error, unique: u64, mut w: Writer) -> Result<usize> {
 
     debug_assert_eq!(header.len as usize, w.bytes_written());
     Ok(w.bytes_written())
-}
-
-fn bytes_to_cstr(buf: &[u8]) -> Result<&CStr> {
-    // Convert to a `CStr` first so that we can drop the '\0' byte at the end
-    // and make sure there are no interior '\0' bytes.
-    CStr::from_bytes_with_nul(buf).map_err(Error::InvalidCString)
 }
 
 fn add_dirent(
