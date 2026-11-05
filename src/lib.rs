@@ -7,6 +7,7 @@ extern crate log;
 
 pub mod descriptor_utils;
 pub mod file_traits;
+pub mod filename;
 pub mod filesystem;
 pub mod fuse;
 pub mod idmap;
@@ -47,6 +48,10 @@ pub enum Error {
     InvalidXattrSize((u32, usize)),
     /// One or more extensions are missing.
     MissingExtension,
+    /// A directory entry name contains "/", is empty, or is "." or "..".
+    InvalidFileName,
+    /// A lookup name contains "/", or is empty.
+    InvalidLookupName,
 }
 
 impl error::Error for Error {}
@@ -68,6 +73,8 @@ impl fmt::Display for Error {
                  decoded value: size = {size}, value.len() = {len}"
             ),
             MissingExtension => write!(f, "one or more extensions are missing"),
+            InvalidFileName => write!(f, "invalid directory entry name"),
+            InvalidLookupName => write!(f, "invalid lookup name"),
         }
     }
 }
