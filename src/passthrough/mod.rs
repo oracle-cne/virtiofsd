@@ -13,7 +13,7 @@ pub mod stat;
 pub mod util;
 pub mod xattrmap;
 
-use crate::filename::FileName;
+use crate::filename::{FileName, LookupName};
 use crate::filesystem::{
     Context, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
     SecContext, SetattrValid, SetxattrFlags, ZeroCopyReader, ZeroCopyWriter,
@@ -1668,8 +1668,8 @@ impl FileSystem for PassthroughFs {
         }
     }
 
-    fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        self.do_lookup(parent, name)
+    fn lookup(&self, _ctx: Context, parent: Inode, name: LookupName<'_>) -> io::Result<Entry> {
+        self.do_lookup(parent, &name)
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {

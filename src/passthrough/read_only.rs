@@ -11,7 +11,7 @@
 
 use super::util::{einval, erofs};
 use super::PassthroughFs;
-use crate::filename::FileName;
+use crate::filename::{FileName, LookupName};
 use crate::filesystem::{
     Context, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
     SerializableFileSystem, SetattrValid, SetxattrFlags, ZeroCopyReader, ZeroCopyWriter,
@@ -178,7 +178,7 @@ impl FileSystem for PassthroughFsRo {
     ops_allow! {
         fn init(&self, capable: FsOptions) -> io::Result<FsOptions>;
         fn destroy(&self);
-        fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry>;
+        fn lookup(&self, ctx: Context, parent: Self::Inode, name: LookupName<'_>) -> io::Result<Entry>;
         fn forget(&self, ctx: Context, inode: Self::Inode, count: u64);
         fn batch_forget(&self, ctx: Context, requests: Vec<(Self::Inode, u64)>);
         fn getattr(&self,
@@ -400,7 +400,7 @@ impl FileSystem for PassthroughFsRo {
         _extensions: Extensions,
     ) -> io::Result<(Entry, Option<Self::Handle>, OpenOptions)> {
         // We never want to create, but we should allow opening existing files
-        let entry = self.lookup(ctx, parent, &name).map_err(|err| {
+        let entry = self.lookup(ctx, parent, name.into()).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 erofs()
             } else {

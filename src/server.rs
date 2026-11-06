@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 use crate::descriptor_utils::{Reader, Writer};
-use crate::filename::FileName;
+use crate::filename::{FileName, LookupName};
 use crate::filesystem::{
     Context, DirEntry, DirectoryIterator, Entry, Extensions, FileSystem, GetxattrReply,
     ListxattrReply, SecContext, SerializableFileSystem, ZeroCopyReader, ZeroCopyWriter,
@@ -26,9 +26,6 @@ use vm_memory::ByteValued;
 const FUSE_BUFFER_HEADER_SIZE: u32 = 0x1000;
 const MAX_BUFFER_SIZE: u32 = 1 << 20;
 const DIRENT_PADDING: [u8; 8] = [0; 8];
-
-const CURRENT_DIR_CSTR: &[u8] = b".";
-const PARENT_DIR_CSTR: &[u8] = b"..";
 
 struct ZcReader<'a>(Reader<'a>);
 
@@ -224,7 +221,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        let name = bytes_to_cstr(buf.as_ref())?;
+        let name = LookupName::try_new(in_header.nodeid, buf.as_ref())?;
 
         match self
             .fs
@@ -1058,8 +1055,11 @@ impl<F: FileSystem + Sync> Server<F> {
         dir_entry: DirEntry<'d>,
     ) -> io::Result<(DirEntry<'d>, Entry)> {
         let parent = in_header.nodeid.into();
-        let name = dir_entry.name.to_bytes();
-        let entry = if name == CURRENT_DIR_CSTR || name == PARENT_DIR_CSTR {
+        // The root resolution in try_new has no effect here because "." and ".."
+        // entries are skipped below and never reach self.fs.lookup().
+        let name = LookupName::try_new(in_header.nodeid, dir_entry.name.to_bytes_with_nul())
+            .map_err(|_| einval())?;
+        let entry = if name.is_dot() || name.is_dotdot() {
             // We use 0 for the inode value to indicate a negative entry.
             Entry {
                 inode: 0,
@@ -1075,8 +1075,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 entry_timeout: Duration::from_secs(0),
             }
         } else {
-            self.fs
-                .lookup(Context::from(*in_header), parent, dir_entry.name)?
+            self.fs.lookup(Context::from(*in_header), parent, name)?
         };
 
         Ok((dir_entry, entry))

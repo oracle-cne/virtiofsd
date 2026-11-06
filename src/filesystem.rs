@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{io, mem};
 
-use crate::filename::FileName;
+use crate::filename::{FileName, LookupName};
 use crate::soft_idmap::{GuestGid, GuestUid};
 use crate::{fuse, oslib};
 
@@ -283,7 +283,7 @@ pub trait FileSystem {
     ///
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
-    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry> {
+    fn lookup(&self, ctx: Context, parent: Self::Inode, name: LookupName<'_>) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
