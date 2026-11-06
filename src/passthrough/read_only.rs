@@ -11,6 +11,7 @@
 
 use super::util::{einval, erofs};
 use super::PassthroughFs;
+use crate::filename::FileName;
 use crate::filesystem::{
     Context, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
     SerializableFileSystem, SetattrValid, SetxattrFlags, ZeroCopyReader, ZeroCopyWriter,
@@ -291,14 +292,14 @@ impl FileSystem for PassthroughFsRo {
             _ctx: Context,
             _linkname: &CStr,
             _parent: Self::Inode,
-            _name: &CStr,
+            _name: FileName<'_>,
             _extensions: Extensions,
         ) -> io::Result<Entry>;
         fn mknod(
             &self,
             _ctx: Context,
             _parent: Self::Inode,
-            _name: &CStr,
+            _name: FileName<'_>,
             _mode: u32,
             _rdev: u32,
             _umask: u32,
@@ -308,20 +309,20 @@ impl FileSystem for PassthroughFsRo {
             &self,
             _ctx: Context,
             _parent: Self::Inode,
-            _name: &CStr,
+            _name: FileName<'_>,
             _mode: u32,
             _umask: u32,
             _extensions: Extensions,
         ) -> io::Result<Entry>;
-        fn unlink(&self, _ctx: Context, _parent: Self::Inode, _name: &CStr) -> io::Result<()>;
-        fn rmdir(&self, _ctx: Context, _parent: Self::Inode, _name: &CStr) -> io::Result<()>;
+        fn unlink(&self, _ctx: Context, _parent: Self::Inode, _name: FileName<'_>) -> io::Result<()>;
+        fn rmdir(&self, _ctx: Context, _parent: Self::Inode, _name: FileName<'_>) -> io::Result<()>;
         fn rename(
             &self,
             _ctx: Context,
             _olddir: Self::Inode,
-            _oldname: &CStr,
+            _oldname: FileName<'_>,
             _newdir: Self::Inode,
-            _newname: &CStr,
+            _newname: FileName<'_>,
             _flags: u32,
         ) -> io::Result<()>;
         fn link(
@@ -329,7 +330,7 @@ impl FileSystem for PassthroughFsRo {
             _ctx: Context,
             _inode: Self::Inode,
             _newparent: Self::Inode,
-            _newname: &CStr,
+            _newname: FileName<'_>,
         ) -> io::Result<Entry>;
         fn write<R: ZeroCopyReader>(
             &self,
@@ -391,7 +392,7 @@ impl FileSystem for PassthroughFsRo {
         &self,
         ctx: Context,
         parent: Self::Inode,
-        name: &CStr,
+        name: FileName<'_>,
         _mode: u32,
         kill_priv: bool,
         flags: u32,
@@ -399,7 +400,7 @@ impl FileSystem for PassthroughFsRo {
         _extensions: Extensions,
     ) -> io::Result<(Entry, Option<Self::Handle>, OpenOptions)> {
         // We never want to create, but we should allow opening existing files
-        let entry = self.lookup(ctx, parent, name).map_err(|err| {
+        let entry = self.lookup(ctx, parent, &name).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 erofs()
             } else {

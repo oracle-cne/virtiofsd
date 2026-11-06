@@ -13,6 +13,7 @@ pub mod stat;
 pub mod util;
 pub mod xattrmap;
 
+use crate::filename::FileName;
 use crate::filesystem::{
     Context, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
     SecContext, SetattrValid, SetxattrFlags, ZeroCopyReader, ZeroCopyWriter,
@@ -1702,7 +1703,7 @@ impl FileSystem for PassthroughFs {
         &self,
         ctx: Context,
         parent: Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         umask: u32,
         extensions: Extensions,
@@ -1710,7 +1711,7 @@ impl FileSystem for PassthroughFs {
         let data = self.inodes.get(parent).ok_or_else(ebadf)?;
         let parent_file = data.get_file()?;
 
-        let invalidated_inode = self.before_invalidating_path(&data, name);
+        let invalidated_inode = self.before_invalidating_path(&data, &name);
         let res = {
             let _credentials_guard = self.unix_credentials_guard(&ctx, &extensions)?;
             let _umask_guard = self
@@ -1730,7 +1731,7 @@ impl FileSystem for PassthroughFs {
 
         // Set security context on dir.
         if let Some(secctx) = extensions.secctx {
-            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, name, &secctx) {
+            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, &name, &secctx) {
                 unsafe {
                     libc::unlinkat(
                         parent_file.as_fd().as_raw_fd(),
@@ -1742,11 +1743,11 @@ impl FileSystem for PassthroughFs {
             }
         }
 
-        self.do_lookup(parent, name)
+        self.do_lookup(parent, &name)
     }
 
-    fn rmdir(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<()> {
-        self.do_unlink(parent, name, libc::AT_REMOVEDIR)
+    fn rmdir(&self, _ctx: Context, parent: Inode, name: FileName<'_>) -> io::Result<()> {
+        self.do_unlink(parent, &name, libc::AT_REMOVEDIR)
     }
 
     fn readdir(
@@ -1800,7 +1801,7 @@ impl FileSystem for PassthroughFs {
         &self,
         ctx: Context,
         parent: Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         kill_priv: bool,
         flags: u32,
@@ -1817,7 +1818,7 @@ impl FileSystem for PassthroughFs {
         let fd = self.do_create(
             &ctx,
             &parent_file,
-            name,
+            &name,
             mode,
             create_flags,
             umask,
@@ -1836,14 +1837,14 @@ impl FileSystem for PassthroughFs {
                     _ => return Err(last_error),
                 }
 
-                let entry = self.do_lookup(parent, name)?;
+                let entry = self.do_lookup(parent, &name)?;
                 let (handle, _) = self.do_open(entry.inode, kill_priv, flags)?;
                 let handle = handle.ok_or_else(ebadf)?;
 
                 (entry, handle)
             }
             Ok(fd) => {
-                let entry = self.do_lookup(parent, name)?;
+                let entry = self.do_lookup(parent, &name)?;
 
                 let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
                 let data = HandleData {
@@ -1870,8 +1871,8 @@ impl FileSystem for PassthroughFs {
         Ok((entry, Some(handle), opts))
     }
 
-    fn unlink(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<()> {
-        self.do_unlink(parent, name, 0)
+    fn unlink(&self, _ctx: Context, parent: Inode, name: FileName<'_>) -> io::Result<()> {
+        self.do_unlink(parent, &name, 0)
     }
 
     fn read<W: ZeroCopyWriter>(
@@ -2103,9 +2104,9 @@ impl FileSystem for PassthroughFs {
         &self,
         _ctx: Context,
         olddir: Inode,
-        oldname: &CStr,
+        oldname: FileName<'_>,
         newdir: Inode,
-        newname: &CStr,
+        newname: FileName<'_>,
         flags: u32,
     ) -> io::Result<()> {
         let old_inode = self.inodes.get(olddir).ok_or_else(ebadf)?;
@@ -2114,7 +2115,7 @@ impl FileSystem for PassthroughFs {
         let old_file = old_inode.get_file()?;
         let new_file = new_inode.get_file()?;
 
-        let invalidated_inode = self.before_invalidating_path(&new_inode, newname);
+        let invalidated_inode = self.before_invalidating_path(&new_inode, &newname);
         // Safe because this doesn't modify any memory and we check the return value.
         // TODO: Switch to libc::renameat2 once https://github.com/rust-lang/libc/pull/1508 lands
         // and we have glibc 2.28.
@@ -2135,7 +2136,7 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::last_os_error());
         }
 
-        if let Err(err) = self.update_inode_migration_info(new_inode, newname) {
+        if let Err(err) = self.update_inode_migration_info(new_inode, &newname) {
             warn!(
                 "Failed to update renamed file's ({oldname:?} -> {newname:?}) migration info, \
                 the migration destination may be unable to find it: {err}",
@@ -2149,7 +2150,7 @@ impl FileSystem for PassthroughFs {
         &self,
         ctx: Context,
         parent: Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         rdev: u32,
         umask: u32,
@@ -2158,7 +2159,7 @@ impl FileSystem for PassthroughFs {
         let data = self.inodes.get(parent).ok_or_else(ebadf)?;
         let parent_file = data.get_file()?;
 
-        let invalidated_inode = self.before_invalidating_path(&data, name);
+        let invalidated_inode = self.before_invalidating_path(&data, &name);
         let res = {
             let _credentials_guard = self.unix_credentials_guard(&ctx, &extensions)?;
             let _umask_guard = self
@@ -2186,14 +2187,14 @@ impl FileSystem for PassthroughFs {
 
         // Set security context on node.
         if let Some(secctx) = extensions.secctx {
-            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, name, &secctx) {
+            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, &name, &secctx) {
                 unsafe {
                     libc::unlinkat(parent_file.as_fd().as_raw_fd(), name.as_ptr(), 0);
                 };
                 return Err(e);
             }
         }
-        self.do_lookup(parent, name)
+        self.do_lookup(parent, &name)
     }
 
     fn link(
@@ -2201,7 +2202,7 @@ impl FileSystem for PassthroughFs {
         _ctx: Context,
         inode: Inode,
         newparent: Inode,
-        newname: &CStr,
+        newname: FileName<'_>,
     ) -> io::Result<Entry> {
         let data = self.inodes.get(inode).ok_or_else(ebadf)?;
         let new_inode = self.inodes.get(newparent).ok_or_else(ebadf)?;
@@ -2212,7 +2213,7 @@ impl FileSystem for PassthroughFs {
         let procname = CString::new(format!("{}", inode_file.as_fd().as_raw_fd()))
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        let invalidated_inode = self.before_invalidating_path(&new_inode, newname);
+        let invalidated_inode = self.before_invalidating_path(&new_inode, &newname);
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe {
             libc::linkat(
@@ -2227,7 +2228,7 @@ impl FileSystem for PassthroughFs {
             self.after_invalidating_path(invalidated_inode, "Overwrote (via link)");
         }
         if res == 0 {
-            self.do_lookup(newparent, newname)
+            self.do_lookup(newparent, &newname)
         } else {
             Err(io::Error::last_os_error())
         }
@@ -2238,13 +2239,13 @@ impl FileSystem for PassthroughFs {
         ctx: Context,
         linkname: &CStr,
         parent: Inode,
-        name: &CStr,
+        name: FileName<'_>,
         extensions: Extensions,
     ) -> io::Result<Entry> {
         let data = self.inodes.get(parent).ok_or_else(ebadf)?;
         let parent_file = data.get_file()?;
 
-        let invalidated_inode = self.before_invalidating_path(&data, name);
+        let invalidated_inode = self.before_invalidating_path(&data, &name);
         let res = {
             let _credentials_guard = self.unix_credentials_guard(&ctx, &extensions)?;
 
@@ -2267,7 +2268,7 @@ impl FileSystem for PassthroughFs {
 
         // Set security context on symlink.
         if let Some(secctx) = extensions.secctx {
-            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, name, &secctx) {
+            if let Err(e) = self.do_mknod_mkdir_symlink_secctx(&parent_file, &name, &secctx) {
                 unsafe {
                     libc::unlinkat(parent_file.as_fd().as_raw_fd(), name.as_ptr(), 0);
                 };
@@ -2275,7 +2276,7 @@ impl FileSystem for PassthroughFs {
             }
         }
 
-        self.do_lookup(parent, name)
+        self.do_lookup(parent, &name)
     }
 
     fn readlink(&self, _ctx: Context, inode: Inode) -> io::Result<Vec<u8>> {

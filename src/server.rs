@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use crate::descriptor_utils::{Reader, Writer};
+use crate::filename::FileName;
 use crate::filesystem::{
     Context, DirEntry, DirectoryIterator, Entry, Extensions, FileSystem, GetxattrReply,
     ListxattrReply, SecContext, SerializableFileSystem, ZeroCopyReader, ZeroCopyWriter,
@@ -341,7 +342,7 @@ impl<F: FileSystem + Sync> Server<F> {
             Context::from(in_header),
             bytes_to_cstr(linkname)?,
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             extensions,
         ) {
             Ok(entry) => {
@@ -375,7 +376,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mknod(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             rdev,
             umask,
@@ -410,7 +411,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mkdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             umask,
             extensions,
@@ -435,7 +436,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.unlink(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -453,7 +454,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rmdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -489,9 +490,9 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rename(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(oldname)?,
+            FileName::try_from(oldname)?,
             newdir.into(),
-            bytes_to_cstr(newname)?,
+            FileName::try_from(newname)?,
             flags,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
@@ -529,7 +530,7 @@ impl<F: FileSystem + Sync> Server<F> {
             Context::from(in_header),
             oldnodeid.into(),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -1263,7 +1264,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.create(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             kill_priv,
             flags,
