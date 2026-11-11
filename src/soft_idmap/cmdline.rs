@@ -115,6 +115,9 @@ pub enum IdMapError {
         /// The error we got.
         error: ParseIntError,
     },
+
+    /// Empty range: count is zero.
+    EmptyRange,
 }
 
 impl std::error::Error for IdMapError {}
@@ -127,6 +130,7 @@ impl Display for IdMapError {
                 f,
                 "Invalid ID map length (expected {expected} elements, got {seen} elements)"
             ),
+            IdMapError::EmptyRange => write!(f, "Empty range in ID map: count is zero"),
             IdMapError::RangeOverflow { base, count } => {
                 write!(
                     f,
@@ -308,8 +312,11 @@ impl IdMap {
         Ok((prefix, values))
     }
 
-    /// Verifies that `base + count` does not overflow `u32`.
+    /// Verifies that `count` is non-zero and `base + count` does not overflow `u32`.
     fn check_range(base: u32, count: u32) -> Result<(), IdMapError> {
+        if count == 0 {
+            return Err(IdMapError::EmptyRange);
+        }
         let _ = base
             .checked_add(count)
             .ok_or(IdMapError::RangeOverflow { base, count })?;
@@ -360,6 +367,27 @@ mod tests {
             assert!(
                 matches!(err, IdMapError::RangeOverflow { .. }),
                 "{}: expected RangeOverflow, got: {}",
+                input,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn empty_range_rejected() {
+        let cases = [
+            "guest:0:0:0",
+            "host:0:0:0",
+            "map:0:0:0",
+            "forbid-guest:0:0",
+            "squash-guest:0:0:0",
+            "squash-host:0:0:0",
+        ];
+        for input in cases {
+            let err = input.parse::<IdMap>().unwrap_err();
+            assert!(
+                matches!(err, IdMapError::EmptyRange),
+                "{}: expected EmptyRange, got: {}",
                 input,
                 err
             );

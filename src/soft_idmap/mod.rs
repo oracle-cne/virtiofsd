@@ -269,6 +269,12 @@ fn id_range_from_u32<I, P: Display>(base: u32, count: u32, param: P) -> io::Resu
 where
     u32: Into<I>,
 {
+    if count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Parameter {param}: Empty range"),
+        ));
+    }
     let start: I = base.into();
     let end: I = base
         .checked_add(count)
@@ -442,6 +448,19 @@ mod tests {
         assert!(
             map.map_guest(GuestUid::from(50)).is_err(),
             "UID inside forbidden range must be rejected"
+        );
+    }
+
+    #[test]
+    fn empty_range_rejected() {
+        let cmdline = vec![cmdline::IdMap::Guest {
+            from_guest: 0,
+            to_host: 0,
+            count: 0,
+        }];
+        assert!(
+            IdMap::<GuestUid, HostUid>::try_from(cmdline).is_err(),
+            "Zero count must be rejected"
         );
     }
 }
