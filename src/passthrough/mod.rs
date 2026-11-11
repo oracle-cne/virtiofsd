@@ -1107,7 +1107,7 @@ impl PassthroughFs {
         }
 
         match &self.cfg.xattrmap {
-            Some(map) => match map.map_client_xattr(name).expect("unterminated mapping") {
+            Some(map) => match map.map_client_xattr(name) {
                 AppliedRule::Deny => Err(io::Error::from_raw_os_error(libc::EPERM)),
                 AppliedRule::Unsupported => Err(io::Error::from_raw_os_error(libc::ENOTSUP)),
                 AppliedRule::Pass(new_name) => Ok(new_name),
@@ -1118,9 +1118,7 @@ impl PassthroughFs {
 
     fn map_server_xattrlist(&self, xattr_names: Vec<u8>) -> Vec<u8> {
         let all_xattrs = match &self.cfg.xattrmap {
-            Some(map) => map
-                .map_server_xattrlist(xattr_names)
-                .expect("unterminated mapping"),
+            Some(map) => map.map_server_xattrlist(xattr_names),
             None => xattr_names,
         };
 

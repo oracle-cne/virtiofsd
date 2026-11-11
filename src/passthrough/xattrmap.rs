@@ -411,10 +411,13 @@ impl XattrMap {
     /// Client request -> this method -> {get,set,remove}xattr() -> server response
     ///
     /// See also: getxattr(2), setxattr(2), removexattr(2)
-    pub fn map_client_xattr<'a>(&self, xattr_name: &'a CStr) -> Result<AppliedRule<'a>, Error> {
-        let rule = self.find_rule(Scope::CLIENT, xattr_name.to_bytes())?;
+    pub fn map_client_xattr<'a>(&self, xattr_name: &'a CStr) -> AppliedRule<'a> {
+        let Ok(rule) = self.find_rule(Scope::CLIENT, xattr_name.to_bytes()) else {
+            // try_from() rejects unterminated mappings, deny as a safe fallback
+            return AppliedRule::Deny;
+        };
 
-        Ok(match rule.type_ {
+        match rule.type_ {
             Type::Okay => AppliedRule::Pass(Cow::Borrowed(xattr_name)),
             Type::Bad => AppliedRule::Deny,
             Type::Unsupported => AppliedRule::Unsupported,
@@ -424,7 +427,7 @@ impl XattrMap {
                 AppliedRule::Pass(Cow::Owned(CString::new(concat).unwrap()))
             }
             Type::Map => panic!("Unexpanded MAP rule was found."),
-        })
+        }
     }
 
     /// Applies xattrmap rules to a list of extended attribute names.
@@ -435,12 +438,15 @@ impl XattrMap {
     /// Client request -> listxattr() -> this method -> server response
     ///
     /// See also: listxattr(2)
-    pub fn map_server_xattrlist(&self, xattr_names: Vec<u8>) -> Result<Vec<u8>, Error> {
+    pub fn map_server_xattrlist(&self, xattr_names: Vec<u8>) -> Vec<u8> {
         let mut filtered = Vec::with_capacity(xattr_names.len());
         let unprocessed = xattr_names.split(|b| *b == 0).filter(|bs| !bs.is_empty());
 
         for xattr_name in unprocessed {
-            let rule = self.find_rule(Scope::SERVER, xattr_name)?;
+            let Ok(rule) = self.find_rule(Scope::SERVER, xattr_name) else {
+                // try_from() rejects unterminated mappings, hide as a safe fallback
+                continue;
+            };
 
             let processed = match rule.type_ {
                 Type::Bad | Type::Unsupported => continue, // hide this from the client
@@ -459,7 +465,7 @@ impl XattrMap {
 
         filtered.shrink_to_fit();
 
-        Ok(filtered)
+        filtered
     }
 
     fn find_rule(&self, scope: Scope, xattr_name: &[u8]) -> Result<&Rule, Error> {
@@ -775,7 +781,7 @@ mod tests {
             }],
         };
         let input = CString::new("user.virtiofs.potato").unwrap();
-        let actual = map.map_client_xattr(&input).unwrap();
+        let actual = map.map_client_xattr(&input);
         let expected = AppliedRule::Pass(CString::new("user.virtiofs.potato").unwrap().into());
         assert_eq!(actual, expected);
     }
@@ -800,7 +806,7 @@ mod tests {
             ],
         };
 
-        let actual = map.map_server_xattrlist(input).unwrap();
+        let actual = map.map_server_xattrlist(input);
         let expected = b"boring_attr\x00";
         assert_eq!(actual.as_slice(), expected);
     }
@@ -825,7 +831,7 @@ mod tests {
             ],
         };
 
-        let actual = map.map_server_xattrlist(input).unwrap();
+        let actual = map.map_server_xattrlist(input);
         let expected = b"boring_attr\x00";
         assert_eq!(actual.as_slice(), expected);
     }
@@ -842,7 +848,7 @@ mod tests {
         };
 
         let input = CString::new("virtiofs.").unwrap();
-        let actual = map.map_client_xattr(&input).unwrap();
+        let actual = map.map_client_xattr(&input);
         let expected = AppliedRule::Deny;
         assert_eq!(actual, expected);
     }
@@ -859,7 +865,7 @@ mod tests {
         };
 
         let input = CString::new("virtiofs.").unwrap();
-        let actual = map.map_client_xattr(&input).unwrap();
+        let actual = map.map_client_xattr(&input);
         let expected = AppliedRule::Unsupported;
         assert_eq!(actual, expected);
     }
@@ -876,7 +882,7 @@ mod tests {
         };
 
         let input = CString::new("trusted.secret_thing").unwrap();
-        let actual = map.map_client_xattr(&input).unwrap();
+        let actual = map.map_client_xattr(&input);
         let expected = AppliedRule::Pass(Cow::Owned(
             CString::new("virtiofs.user.trusted.secret_thing").unwrap(),
         ));
@@ -895,7 +901,7 @@ mod tests {
         };
 
         let list = b"virtiofs.user.x".to_vec();
-        let actual = map.map_server_xattrlist(list).unwrap();
+        let actual = map.map_server_xattrlist(list);
         let expected = b"x\x00".to_vec();
         assert_eq!(actual, expected);
     }
@@ -912,13 +918,13 @@ mod tests {
         };
 
         let input = CString::new("allow.y").unwrap();
-        let actual = map.map_client_xattr(&input).unwrap();
+        let actual = map.map_client_xattr(&input);
         let expected = AppliedRule::Pass(Cow::Owned(CString::new("allow.y").unwrap()));
         assert_eq!(actual, expected);
 
         let list = b"allow.y\x00".to_vec();
         let expected = list.clone();
-        let actual = map.map_server_xattrlist(list).unwrap();
+        let actual = map.map_server_xattrlist(list);
         assert_eq!(actual, expected);
     }
 
@@ -986,5 +992,37 @@ mod tests {
                 catch_all_type
             );
         }
+    }
+
+    #[test]
+    fn test_map_client_xattr_denies_unmatched_name() {
+        let map = XattrMap {
+            rules: vec![Rule {
+                type_: Type::Okay,
+                scope: Scope::CLIENT,
+                key: CString::new("specific.").unwrap(),
+                prepend: CString::new("").unwrap(),
+            }],
+        };
+
+        let input = CString::new("other.attr").unwrap();
+        let actual = map.map_client_xattr(&input);
+        assert_eq!(actual, AppliedRule::Deny);
+    }
+
+    #[test]
+    fn test_map_server_xattrlist_hides_unmatched_names() {
+        let map = XattrMap {
+            rules: vec![Rule {
+                type_: Type::Okay,
+                scope: Scope::SERVER,
+                key: CString::new("").unwrap(),
+                prepend: CString::new("specific.").unwrap(),
+            }],
+        };
+
+        let input = b"specific.visible\x00other.hidden".to_vec();
+        let actual = map.map_server_xattrlist(input);
+        assert_eq!(actual, b"specific.visible\x00");
     }
 }
