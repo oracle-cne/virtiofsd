@@ -222,6 +222,7 @@ pub fn open_tree(dir: Option<&dyn AsFd>, pathname: &CStr, flags: u32) -> Result<
 // libc does not define this on musl.
 // https://github.com/rust-lang/libc/pull/3534#discussion_r2573036200
 pub const MOVE_MOUNT_F_EMPTY_PATH: libc::c_uint = 0x00000004;
+pub const MOVE_MOUNT_T_SYMLINKS: libc::c_uint = 0x00000010;
 
 /// Safe wrapper around `move_mount(2)`.
 ///

@@ -245,7 +245,7 @@ impl Sandbox {
             &CString::default(),
             None,
             &c_shared_dir,
-            oslib::MOVE_MOUNT_F_EMPTY_PATH,
+            oslib::MOVE_MOUNT_F_EMPTY_PATH | oslib::MOVE_MOUNT_T_SYMLINKS,
         )
         .map_err(Error::BindMountSharedDir)?;
 
