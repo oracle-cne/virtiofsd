@@ -117,7 +117,7 @@ pub enum ErrorKind {
         expected: String,
     },
 
-    /// Type is not one of "prefix", "ok", "bad", or "map".
+    /// Type is not one of "prefix", "ok", "bad", "unsupported", or "map".
     InvalidType {
         /// The unexpected value parsed from the input stream.
         got: String,
@@ -141,7 +141,7 @@ pub enum ErrorKind {
     /// The input stream doesn't contain any rules.
     NoRulesProvided,
 
-    /// None of the rules matched on the input.
+    /// The mapping does not end with a catch-all rule, or no rule matched the input at runtime.
     UnterminatedMapping,
 }
 
@@ -149,7 +149,24 @@ impl std::error::Error for ErrorKind {}
 
 impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::InvalidScope { got, expected } => {
+                write!(f, "invalid scope '{got}', expected one of {expected}")
+            }
+            Self::InvalidType { got, expected } => {
+                write!(f, "invalid type '{got}', expected one of {expected}")
+            }
+            Self::InvalidDelimiter => write!(f, "mismatched delimiter"),
+            Self::IncompleteRule => write!(f, "incomplete rule, missing fields"),
+            Self::MapRuleViolation => {
+                write!(f, "only one 'map' rule is allowed and it must be last")
+            }
+            Self::NoRulesProvided => write!(f, "no rules provided"),
+            Self::UnterminatedMapping => write!(
+                f,
+                "the last rule must be a catch-all (ok/bad/unsupported with scope 'all', empty key, and empty prepend)"
+            ),
+        }
     }
 }
 
@@ -171,7 +188,10 @@ impl std::error::Error for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self.rule {
+            Some(n) => write!(f, "rule {n}: {}", self.cause),
+            None => write!(f, "{}", self.cause),
+        }
     }
 }
 
@@ -231,7 +251,7 @@ impl Type {
             _ => {
                 return Err(ErrorKind::InvalidType {
                     got: String::from_utf8_lossy(bytes).into(),
-                    expected: ["prefix", "ok", "bad", "map"].join(", "),
+                    expected: ["prefix", "ok", "bad", "unsupported", "map"].join(", "),
                 })
             }
         })
