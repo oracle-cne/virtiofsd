@@ -143,6 +143,9 @@ pub enum ErrorKind {
 
     /// The mapping does not end with a catch-all rule, or no rule matched the input at runtime.
     UnterminatedMapping,
+
+    /// A catch-all rule appears before the last position, making later rules unreachable.
+    UnreachableRules,
 }
 
 impl std::error::Error for ErrorKind {}
@@ -165,6 +168,10 @@ impl fmt::Display for ErrorKind {
             Self::UnterminatedMapping => write!(
                 f,
                 "the last rule must be a catch-all (ok/bad/unsupported with scope 'all', empty key, and empty prepend)"
+            ),
+            Self::UnreachableRules => write!(
+                f,
+                "a catch-all rule before the last position makes later rules unreachable"
             ),
         }
     }
@@ -510,6 +517,34 @@ impl TryFrom<&str> for XattrMap {
             return Err(ErrorKind::NoRulesProvided.into());
         }
 
+        let is_catch_all = |r: &Rule| {
+            r.key.as_bytes().is_empty()
+                && r.prepend.as_bytes().is_empty()
+                && r.scope.contains(Scope::CLIENT | Scope::SERVER)
+                && matches!(r.type_, Type::Okay | Type::Bad | Type::Unsupported)
+        };
+
+        // A catch-all before the last position makes later rules unreachable.
+        if let Some((i, _)) = rules[..rules.len() - 1]
+            .iter()
+            .enumerate()
+            .find(|(_, r)| is_catch_all(r))
+        {
+            return Err(Error {
+                cause: ErrorKind::UnreachableRules,
+                rule: Some(i + 1),
+            });
+        }
+
+        // The last rule must be a catch-all that matches every xattr name
+        // in both scopes.
+        if !rules.last().is_some_and(is_catch_all) {
+            return Err(Error {
+                cause: ErrorKind::UnterminatedMapping,
+                rule: Some(rules.len()),
+            });
+        }
+
         Ok(Self { rules })
     }
 }
@@ -519,16 +554,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parser_can_parse_single_rule() {
-        let input = ":prefix:client:trusted.:user.virtiofs.:";
+    fn test_parser_can_parse_prefix_rule_with_catch_all() {
+        let input = ":prefix:client:trusted.:user.virtiofs.::ok:all:::";
         let actual = XattrMap::try_from(input).unwrap();
         let expected = XattrMap {
-            rules: vec![Rule {
-                type_: Type::Prefix,
-                scope: Scope::CLIENT,
-                key: CString::new("trusted.").unwrap(),
-                prepend: CString::new("user.virtiofs.").unwrap(),
-            }],
+            rules: vec![
+                Rule {
+                    type_: Type::Prefix,
+                    scope: Scope::CLIENT,
+                    key: CString::new("trusted.").unwrap(),
+                    prepend: CString::new("user.virtiofs.").unwrap(),
+                },
+                Rule {
+                    type_: Type::Okay,
+                    scope: Scope::CLIENT | Scope::SERVER,
+                    key: CString::new("").unwrap(),
+                    prepend: CString::new("").unwrap(),
+                },
+            ],
         };
 
         assert_eq!(actual, expected);
@@ -699,15 +742,22 @@ mod tests {
 
     #[test]
     fn test_parser_can_parse_rules_with_different_delimiters() {
-        let input = ":prefix:all:trusted.:user.virtiofs.: /prefix/all/trusted./user.virtiofs./";
-        let expected_rule = Rule {
+        let input =
+            ":prefix:all:trusted.:user.virtiofs.: /prefix/all/trusted./user.virtiofs./ :ok:all:::";
+        let prefix_rule = Rule {
             type_: Type::Prefix,
             scope: Scope::CLIENT | Scope::SERVER,
             key: CString::new("trusted.").unwrap(),
             prepend: CString::new("user.virtiofs.").unwrap(),
         };
+        let catch_all = Rule {
+            type_: Type::Okay,
+            scope: Scope::CLIENT | Scope::SERVER,
+            key: CString::new("").unwrap(),
+            prepend: CString::new("").unwrap(),
+        };
         let expected = XattrMap {
-            rules: vec![expected_rule.clone(), expected_rule],
+            rules: vec![prefix_rule.clone(), prefix_rule, catch_all],
         };
 
         let actual = XattrMap::try_from(input).unwrap();
@@ -870,5 +920,71 @@ mod tests {
         let expected = list.clone();
         let actual = map.map_server_xattrlist(list).unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_parser_rejects_unterminated_mapping() {
+        let input = ":prefix:all:security.:user.virtiofs.:";
+        let actual = XattrMap::try_from(input).unwrap_err();
+        assert_eq!(actual.cause, ErrorKind::UnterminatedMapping);
+        assert_eq!(actual.rule, Some(1));
+    }
+
+    #[test]
+    fn test_parser_rejects_early_catch_all() {
+        let input = ":ok:all::: :bad:all:::";
+        let actual = XattrMap::try_from(input).unwrap_err();
+        assert_eq!(actual.cause, ErrorKind::UnreachableRules);
+        assert_eq!(actual.rule, Some(1));
+    }
+
+    #[test]
+    fn test_parser_rejects_catch_all_with_nonempty_key_or_prepend() {
+        let prefix = ":prefix:all:trusted.:user.virtiofs.:";
+        // non-empty key
+        let input = format!("{prefix}:ok:all:security.::");
+        let actual = XattrMap::try_from(input.as_str()).unwrap_err();
+        assert_eq!(
+            actual.cause,
+            ErrorKind::UnterminatedMapping,
+            "non-empty key should be rejected as catch-all"
+        );
+
+        // non-empty prepend
+        let input = format!("{prefix}:ok:all::security.:");
+        let actual = XattrMap::try_from(input.as_str()).unwrap_err();
+        assert_eq!(
+            actual.cause,
+            ErrorKind::UnterminatedMapping,
+            "non-empty prepend should be rejected as catch-all"
+        );
+    }
+
+    #[test]
+    fn test_parser_rejects_catch_all_with_partial_scope() {
+        let prefix = ":prefix:all:trusted.:user.virtiofs.:";
+        for scope in ["client", "server"] {
+            let input = format!("{prefix}:ok:{scope}:::");
+            let actual = XattrMap::try_from(input.as_str()).unwrap_err();
+            assert_eq!(
+                actual.cause,
+                ErrorKind::UnterminatedMapping,
+                "scope '{}' should be rejected as catch-all",
+                scope
+            );
+        }
+    }
+
+    #[test]
+    fn test_parser_accepts_valid_catch_all_types() {
+        let prefix = ":prefix:all:trusted.:user.virtiofs.:";
+        for catch_all_type in ["ok", "bad", "unsupported"] {
+            let input = format!("{prefix}:{catch_all_type}:all:::");
+            assert!(
+                XattrMap::try_from(input.as_str()).is_ok(),
+                "catch-all type '{}' should be accepted",
+                catch_all_type
+            );
+        }
     }
 }
