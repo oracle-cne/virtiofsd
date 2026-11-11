@@ -355,7 +355,7 @@ where
 
                 cmdline::IdMap::ForbidGuest { from_guest, count } => {
                     map.push_guest_to_host(MapEntry::Fail {
-                        from: (from_guest.into())..((from_guest + count).into()),
+                        from: id_range_from_u32(from_guest, count, &entry)?,
                     })
                     .err_context(|| &entry)?;
                 }
@@ -396,5 +396,52 @@ mod tests {
         let map = IdMap::<GuestUid, HostUid>::empty();
         let result = map.map_host(HostUid::from(1000));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn forbid_guest_overflow_rejected() {
+        let cmdline = vec![cmdline::IdMap::ForbidGuest {
+            from_guest: 1,
+            count: u32::MAX,
+        }];
+        let result = IdMap::<GuestUid, HostUid>::try_from(cmdline);
+        assert!(
+            result.is_err(),
+            "ForbidGuest with overflowing range must fail"
+        );
+
+        let cmdline = vec![cmdline::IdMap::ForbidGuest {
+            from_guest: u32::MAX,
+            count: 1,
+        }];
+        let result = IdMap::<GuestUid, HostUid>::try_from(cmdline);
+        assert!(
+            result.is_err(),
+            "ForbidGuest with overflowing base must fail"
+        );
+    }
+
+    #[test]
+    fn forbid_guest_valid_range() {
+        let cmdline = vec![cmdline::IdMap::ForbidGuest {
+            from_guest: 0,
+            count: 100,
+        }];
+        let result = IdMap::<GuestUid, HostUid>::try_from(cmdline);
+        assert!(result.is_ok(), "ForbidGuest with valid range must succeed");
+    }
+
+    #[test]
+    fn forbid_guest_rejects_mapped_uid() {
+        let cmdline = vec![cmdline::IdMap::ForbidGuest {
+            from_guest: 0,
+            count: 100,
+        }];
+        let map = IdMap::<GuestUid, HostUid>::try_from(cmdline).unwrap();
+
+        assert!(
+            map.map_guest(GuestUid::from(50)).is_err(),
+            "UID inside forbidden range must be rejected"
+        );
     }
 }
