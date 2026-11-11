@@ -1167,6 +1167,17 @@ pub struct FallocateIn {
 }
 unsafe impl ByteValued for FallocateIn {}
 
+/// Invalid `UID`/`GID` sentinel.
+///
+/// This value will be set by the kernel to `InHeader::{uid,gid}` fields in case when:
+///  - fuse daemon enabled `ALLOW_IDMAP`
+///  - idmapping information is not available and uid/gid cannot be mapped in
+///    accordance with an idmapping.
+///
+///  Note: idmapping information is always available for inode creation operations like:
+///  `MKNOD`, `SYMLINK`, `MKDIR`, `TMPFILE`, `CREATE` and `RENAME2` (with `RENAME_WHITEOUT`).
+pub const INVALID_UIDGID: u32 = u32::MAX;
+
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct InHeader {

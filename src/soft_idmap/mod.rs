@@ -67,6 +67,7 @@ enum MapEntry<Source: Id, Target: Id> {
 #[derive(Clone, Debug)]
 pub enum MapError<Source: Id> {
     ExplicitFailMapping { id: Source },
+    InvalidId,
 }
 
 impl<Guest, Host> IdMap<Guest, Host>
@@ -89,18 +90,38 @@ where
 
     /// Map a guest UID/GID to one in the host domain.
     pub fn map_guest(&self, guest_id: Guest) -> Result<Host, MapError<Guest>> {
-        self.guest_to_host
+        if !guest_id.is_valid() {
+            return Err(MapError::InvalidId);
+        }
+
+        let host_id = self
+            .guest_to_host
             .get(guest_id.into_inner())
             .map(|e| e.map(guest_id))
-            .unwrap_or(Ok(guest_id.id_mapped()))
+            .unwrap_or(Ok(guest_id.id_mapped()))?;
+
+        if !host_id.is_valid() {
+            return Err(MapError::InvalidId);
+        }
+        Ok(host_id)
     }
 
     /// Map a host UID/GID to one in the guest domain.
     pub fn map_host(&self, host_id: Host) -> Result<Guest, MapError<Host>> {
-        self.host_to_guest
+        if !host_id.is_valid() {
+            return Err(MapError::InvalidId);
+        }
+
+        let guest_id = self
+            .host_to_guest
             .get(host_id.into_inner())
             .map(|e| e.map(host_id))
-            .unwrap_or(Ok(host_id.id_mapped()))
+            .unwrap_or(Ok(host_id.id_mapped()))?;
+
+        if !guest_id.is_valid() {
+            return Err(MapError::InvalidId);
+        }
+        Ok(guest_id)
     }
 
     /**
@@ -198,6 +219,9 @@ impl<Source: Id> Display for MapError<Source> {
             MapError::ExplicitFailMapping { id } => {
                 write!(f, "Use of ID {id} has been configured to fail")
             }
+            MapError::InvalidId => {
+                write!(f, "ID is not valid")
+            }
         }
     }
 }
@@ -206,7 +230,12 @@ impl<Source: Id> std::error::Error for MapError<Source> {}
 
 impl<Source: Id> From<MapError<Source>> for io::Error {
     fn from(err: MapError<Source>) -> Self {
-        io::Error::new(io::ErrorKind::PermissionDenied, err)
+        match &err {
+            MapError::ExplicitFailMapping { .. } => {
+                io::Error::new(io::ErrorKind::PermissionDenied, err)
+            }
+            MapError::InvalidId => io::Error::from_raw_os_error(libc::EOVERFLOW),
+        }
     }
 }
 
@@ -334,5 +363,38 @@ where
         }
 
         Ok(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_guest_rejects_invalid_id() {
+        let map = IdMap::<GuestUid, HostUid>::empty();
+        let result = map.map_guest(GuestUid::from(crate::fuse::INVALID_UIDGID));
+        assert!(matches!(result, Err(MapError::InvalidId)));
+    }
+
+    #[test]
+    fn map_host_rejects_invalid_id() {
+        let map = IdMap::<GuestUid, HostUid>::empty();
+        let result = map.map_host(HostUid::from(crate::fuse::INVALID_UIDGID));
+        assert!(matches!(result, Err(MapError::InvalidId)));
+    }
+
+    #[test]
+    fn map_guest_accepts_valid_id() {
+        let map = IdMap::<GuestUid, HostUid>::empty();
+        let result = map.map_guest(GuestUid::from(1000));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn map_host_accepts_valid_id() {
+        let map = IdMap::<GuestUid, HostUid>::empty();
+        let result = map.map_host(HostUid::from(1000));
+        assert!(result.is_ok());
     }
 }
