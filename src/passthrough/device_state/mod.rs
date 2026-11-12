@@ -69,7 +69,7 @@ impl SerializableFileSystem for PassthroughFs {
         checker.check_paths();
     }
 
-    fn serialize(&self, mut state_pipe: File) -> io::Result<()> {
+    fn serialize(&self, mut state_pipe: File, extra_state: Option<&[u8]>) -> io::Result<()> {
         self.track_migration_info.store(false, Ordering::Relaxed);
 
         if self.cfg.migration_confirm_paths {
@@ -80,20 +80,34 @@ impl SerializableFileSystem for PassthroughFs {
             }
         }
 
-        let state = serialized::PassthroughFs::V2(self.into());
+        let v2: serialized::PassthroughFsV2 = self.into();
+        let state = serialized::PassthroughFs::V3(serialized::PassthroughFsV3 {
+            v2,
+            extra_state: extra_state.map(|s| s.to_vec()),
+        });
+
         self.inodes.clear_migration_info();
         let serialized: Vec<u8> = state.try_into()?;
         state_pipe.write_all(&serialized)?;
         Ok(())
     }
 
-    fn deserialize_and_apply(&self, mut state_pipe: File) -> io::Result<()> {
+    fn deserialize_and_apply(&self, mut state_pipe: File) -> io::Result<Option<Vec<u8>>> {
         let mut serialized: Vec<u8> = Vec::new();
         state_pipe.read_to_end(&mut serialized)?;
         match serialized::PassthroughFs::try_from(serialized)? {
-            serialized::PassthroughFs::V1(state) => state.apply(self)?,
-            serialized::PassthroughFs::V2(state) => state.apply(self)?,
-        };
-        Ok(())
+            serialized::PassthroughFs::V1(state) => {
+                state.apply(self)?;
+                Ok(None)
+            }
+            serialized::PassthroughFs::V2(state) => {
+                state.apply(self)?;
+                Ok(None)
+            }
+            serialized::PassthroughFs::V3(state) => {
+                state.v2.apply(self)?;
+                Ok(state.extra_state)
+            }
+        }
     }
 }
