@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use crate::descriptor_utils::{Reader, Writer};
+use crate::filename::{FileName, LookupName};
 use crate::filesystem::{
     Context, DirEntry, DirectoryIterator, Entry, Extensions, FileSystem, GetxattrReply,
     ListxattrReply, SecContext, SerializableFileSystem, ZeroCopyReader, ZeroCopyWriter,
@@ -10,9 +11,10 @@ use crate::filesystem::{
 use crate::fuse::*;
 use crate::passthrough::util::einval;
 use crate::soft_idmap::GuestGid;
+use crate::util::bytes_to_cstr;
 use crate::{oslib, Error, Result};
 use std::convert::{TryFrom, TryInto};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
@@ -24,9 +26,6 @@ use vm_memory::ByteValued;
 const FUSE_BUFFER_HEADER_SIZE: u32 = 0x1000;
 const MAX_BUFFER_SIZE: u32 = 1 << 20;
 const DIRENT_PADDING: [u8; 8] = [0; 8];
-
-const CURRENT_DIR_CSTR: &[u8] = b".";
-const PARENT_DIR_CSTR: &[u8] = b"..";
 
 struct ZcReader<'a>(Reader<'a>);
 
@@ -222,7 +221,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        let name = bytes_to_cstr(buf.as_ref())?;
+        let name = LookupName::try_new(in_header.nodeid, buf.as_ref())?;
 
         match self
             .fs
@@ -340,7 +339,7 @@ impl<F: FileSystem + Sync> Server<F> {
             Context::from(in_header),
             bytes_to_cstr(linkname)?,
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             extensions,
         ) {
             Ok(entry) => {
@@ -374,7 +373,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mknod(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             rdev,
             umask,
@@ -409,7 +408,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mkdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             umask,
             extensions,
@@ -434,7 +433,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.unlink(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -452,7 +451,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rmdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -488,9 +487,9 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rename(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(oldname)?,
+            FileName::try_from(oldname)?,
             newdir.into(),
-            bytes_to_cstr(newname)?,
+            FileName::try_from(newname)?,
             flags,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
@@ -528,7 +527,7 @@ impl<F: FileSystem + Sync> Server<F> {
             Context::from(in_header),
             oldnodeid.into(),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            FileName::try_from(name.as_slice())?,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -1056,8 +1055,11 @@ impl<F: FileSystem + Sync> Server<F> {
         dir_entry: DirEntry<'d>,
     ) -> io::Result<(DirEntry<'d>, Entry)> {
         let parent = in_header.nodeid.into();
-        let name = dir_entry.name.to_bytes();
-        let entry = if name == CURRENT_DIR_CSTR || name == PARENT_DIR_CSTR {
+        // The root resolution in try_new has no effect here because "." and ".."
+        // entries are skipped below and never reach self.fs.lookup().
+        let name = LookupName::try_new(in_header.nodeid, dir_entry.name.to_bytes_with_nul())
+            .map_err(|_| einval())?;
+        let entry = if name.is_dot() || name.is_dotdot() {
             // We use 0 for the inode value to indicate a negative entry.
             Entry {
                 inode: 0,
@@ -1073,8 +1075,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 entry_timeout: Duration::from_secs(0),
             }
         } else {
-            self.fs
-                .lookup(Context::from(*in_header), parent, dir_entry.name)?
+            self.fs.lookup(Context::from(*in_header), parent, name)?
         };
 
         Ok((dir_entry, entry))
@@ -1262,7 +1263,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.create(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            FileName::try_from(name)?,
             mode,
             kill_priv,
             flags,
@@ -1568,12 +1569,6 @@ fn reply_error(e: io::Error, unique: u64, mut w: Writer) -> Result<usize> {
 
     debug_assert_eq!(header.len as usize, w.bytes_written());
     Ok(w.bytes_written())
-}
-
-fn bytes_to_cstr(buf: &[u8]) -> Result<&CStr> {
-    // Convert to a `CStr` first so that we can drop the '\0' byte at the end
-    // and make sure there are no interior '\0' bytes.
-    CStr::from_bytes_with_nul(buf).map_err(Error::InvalidCString)
 }
 
 fn add_dirent(

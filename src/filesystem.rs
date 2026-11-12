@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{io, mem};
 
+use crate::filename::{FileName, LookupName};
 use crate::soft_idmap::{GuestGid, GuestUid};
 use crate::{fuse, oslib};
 
@@ -282,7 +283,7 @@ pub trait FileSystem {
     ///
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
-    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry> {
+    fn lookup(&self, ctx: Context, parent: Self::Inode, name: LookupName<'_>) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -372,7 +373,7 @@ pub trait FileSystem {
         ctx: Context,
         linkname: &CStr,
         parent: Self::Inode,
-        name: &CStr,
+        name: FileName<'_>,
         extensions: Extensions,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
@@ -394,7 +395,7 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         inode: Self::Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         rdev: u32,
         umask: u32,
@@ -415,7 +416,7 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         parent: Self::Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         umask: u32,
         extensions: Extensions,
@@ -428,7 +429,7 @@ pub trait FileSystem {
     /// If the file's inode lookup count is non-zero, then the file system is expected to delay
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
-    fn unlink(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
+    fn unlink(&self, ctx: Context, parent: Self::Inode, name: FileName<'_>) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -437,7 +438,7 @@ pub trait FileSystem {
     /// If the directory's inode lookup count is non-zero, then the file system is expected to delay
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
-    fn rmdir(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
+    fn rmdir(&self, ctx: Context, parent: Self::Inode, name: FileName<'_>) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -457,9 +458,9 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         olddir: Self::Inode,
-        oldname: &CStr,
+        oldname: FileName<'_>,
         newdir: Self::Inode,
-        newname: &CStr,
+        newname: FileName<'_>,
         flags: u32,
     ) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
@@ -476,7 +477,7 @@ pub trait FileSystem {
         ctx: Context,
         inode: Self::Inode,
         newparent: Self::Inode,
-        newname: &CStr,
+        newname: FileName<'_>,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
@@ -557,7 +558,7 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         parent: Self::Inode,
-        name: &CStr,
+        name: FileName<'_>,
         mode: u32,
         kill_priv: bool,
         flags: u32,

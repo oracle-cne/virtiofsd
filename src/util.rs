@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::ffi::CStr;
 use std::fs::{File, OpenOptions};
 use std::io::{Error, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -189,4 +190,10 @@ impl<V, E: ErrorContext> ResultErrorContext for Result<V, E> {
     fn err_context<C: std::fmt::Display, F: FnOnce() -> C>(self, context: F) -> Self {
         self.map_err(|err| err.context(context()))
     }
+}
+
+pub(crate) fn bytes_to_cstr(buf: &[u8]) -> crate::Result<&CStr> {
+    // Convert to a `CStr` first so that we can drop the '\0' byte at the end
+    // and make sure there are no interior '\0' bytes.
+    CStr::from_bytes_with_nul(buf).map_err(crate::Error::InvalidCString)
 }
