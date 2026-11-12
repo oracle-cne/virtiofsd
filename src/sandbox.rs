@@ -503,6 +503,22 @@ impl Sandbox {
                 warn!("Couldn't set the process gid as root: {ret}");
             }
 
+            // Re-check supplementary groups after becoming root inside the
+            // user namespace. The earlier check in enter() sees a non-root
+            // euid and skips the drop.
+            let must_drop = self
+                .must_drop_supplemental_groups()
+                .unwrap_or_else(|error| {
+                    warn!(
+                    "Failed to determine whether supplemental groups must be dropped: {error}; \
+                    defaulting to trying to drop supplemental groups"
+                );
+                    true
+                });
+            if must_drop {
+                self.drop_supplemental_groups()?;
+            }
+
             let child = util::sfork().map_err(Error::Fork)?;
             if child == 0 {
                 // Second child
