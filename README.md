@@ -46,6 +46,11 @@ The debug binary is built only for x86\_64 Linux-based systems.
 [Click here to download the latest build](
 https://gitlab.com/virtio-fs/virtiofsd/-/jobs/artifacts/main/download?job=publish)
 
+## Security
+See [doc/security.md](doc/security.md) for security considerations when using
+chroot sandboxing, `--killpriv-v2`, file handles (`--inode-file-handles`),
+live migration, or snapshot restoration.
+
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -127,6 +132,7 @@ This is required if the shared directory is an NFS file system.
 --killpriv-v2
 ```
 Enable `KILLPRIV V2` support. It is disabled by default.
+See [doc/security.md](doc/security.md#killpriv_v2-limitations) for limitations.
 
 ```shell
 --no-readdirplus
@@ -260,12 +266,18 @@ net namespace (`network_namespaces(7)`) is also created to isolate the process.
 directory tree its root. This mode is intended for container environments where
 the container runtime has already set up the namespaces and the program does
 not have permission to create namespaces itself.
+See [doc/security.md](doc/security.md#limitations-of-chroot-mode) for details.
 
 - **none**: Do not isolate the daemon (not recommended).
 
-Both **namespace** and **chroot** sandbox modes prevent "file system escapes"
-due to symlinks and other file system objects that might lead to files outside
-the shared directory.
+The **namespace** sandbox mode prevents file system escapes such as symlink
+traversal and `..` escapes.  The **chroot** mode blocks the same path-based
+escapes but does not fully isolate the process unless a container provides
+namespace isolation.
+
+**Note**: Neither sandbox mode limits file handle scope.  When file handles
+are enabled (the default), the shared directory must sit on a separate filesystem.
+See [doc/security.md](doc/security.md).
 
 Default: namespace.
 
@@ -309,6 +321,12 @@ Using file handles reduces the number of file descriptors virtiofsd keeps open, 
 with resources, but may also be important in cases where virtiofsd should only have file descriptors open
 for files that are open in the guest, e.g. to get around bad interactions with NFS's silly renaming
 (see [NFS FAQ, Section D2: "What is a "silly rename"?"](http://nfs.sourceforge.net/)).
+
+**Security note**: When file handles are enabled, the shared directory **must** sit
+on a separate filesystem (dedicated partition, filesystem image, etc.).
+File handles resolve at the filesystem level and can reach any file on the same
+filesystem, bypassing `chroot` and `pivot_root` boundaries.
+See [doc/security.md](doc/security.md).
 
 Default: prefer.
 

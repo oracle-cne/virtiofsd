@@ -214,6 +214,11 @@ when using them for virtio-fs migration, the source and destination instance
 must use the same shared directory on the same filesystem, e.g. a shared network
 filesystem.
 
+**Security note**: A tampered migration stream or snapshot can contain forged
+file handles that reference files outside the shared directory.  Place the
+shared directory on a separate filesystem to confine handle resolution.
+See [security.md](security.md).
+
 Recommended Configurations
 --------------------------
 
