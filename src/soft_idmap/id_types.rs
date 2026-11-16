@@ -54,6 +54,9 @@ pub trait Id:
     /// Is this a root UID/GID?
     fn is_root(&self) -> bool;
 
+    /// Is this a valid UID/GID?
+    fn is_valid(&self) -> bool;
+
     /// Get the raw numerical value.
     fn into_inner(self) -> Self::Inner;
 }
@@ -158,6 +161,10 @@ macro_rules! impl_ids {
 
                 fn is_root(&self) -> bool {
                     self.0 == 0
+                }
+
+                fn is_valid(&self) -> bool {
+                    self.0 != crate::fuse::INVALID_UIDGID
                 }
 
                 fn into_inner(self) -> $inner {

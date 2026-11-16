@@ -94,6 +94,20 @@ pub enum IdMapError {
         seen: usize,
     },
 
+    /// Range overflow: base + count exceeds `u32::MAX`.
+    RangeOverflow {
+        /// Range base.
+        base: u32,
+        /// Range length.
+        count: u32,
+    },
+
+    /// Destination ID is not valid.
+    InvalidDestination {
+        /// The destination value.
+        id: u32,
+    },
+
     /// Error parsing an integer.
     InvalidValue {
         /// The value in question that could not be parsed.
@@ -101,6 +115,9 @@ pub enum IdMapError {
         /// The error we got.
         error: ParseIntError,
     },
+
+    /// Empty range: count is zero.
+    EmptyRange,
 }
 
 impl std::error::Error for IdMapError {}
@@ -113,6 +130,16 @@ impl Display for IdMapError {
                 f,
                 "Invalid ID map length (expected {expected} elements, got {seen} elements)"
             ),
+            IdMapError::EmptyRange => write!(f, "Empty range in ID map: count is zero"),
+            IdMapError::RangeOverflow { base, count } => {
+                write!(
+                    f,
+                    "Range overflow in ID map: {base} + {count} exceeds maximum"
+                )
+            }
+            IdMapError::InvalidDestination { id } => {
+                write!(f, "Destination ID {id} is not valid")
+            }
             IdMapError::InvalidValue { value, error } => {
                 write!(f, "Invalid value {value} in ID map: {error}")
             }
@@ -129,6 +156,8 @@ impl FromStr for IdMap {
         match prefix.as_str() {
             "guest" => {
                 Self::check_arg_count(&fields, 3)?;
+                Self::check_range(fields[0], fields[2])?;
+                Self::check_range(fields[1], fields[2])?;
                 Ok(IdMap::Guest {
                     from_guest: fields[0],
                     to_host: fields[1],
@@ -138,6 +167,8 @@ impl FromStr for IdMap {
 
             "host" => {
                 Self::check_arg_count(&fields, 3)?;
+                Self::check_range(fields[0], fields[2])?;
+                Self::check_range(fields[1], fields[2])?;
                 Ok(IdMap::Host {
                     from_host: fields[0],
                     to_guest: fields[1],
@@ -147,6 +178,8 @@ impl FromStr for IdMap {
 
             "squash-guest" => {
                 Self::check_arg_count(&fields, 3)?;
+                Self::check_range(fields[0], fields[2])?;
+                Self::check_destination(fields[1])?;
                 Ok(IdMap::SquashGuest {
                     from_guest: fields[0],
                     to_host: fields[1],
@@ -156,6 +189,8 @@ impl FromStr for IdMap {
 
             "squash-host" => {
                 Self::check_arg_count(&fields, 3)?;
+                Self::check_range(fields[0], fields[2])?;
+                Self::check_destination(fields[1])?;
                 Ok(IdMap::SquashHost {
                     from_host: fields[0],
                     to_guest: fields[1],
@@ -165,6 +200,7 @@ impl FromStr for IdMap {
 
             "forbid-guest" => {
                 Self::check_arg_count(&fields, 2)?;
+                Self::check_range(fields[0], fields[1])?;
                 Ok(IdMap::ForbidGuest {
                     from_guest: fields[0],
                     count: fields[1],
@@ -173,6 +209,8 @@ impl FromStr for IdMap {
 
             "map" => {
                 Self::check_arg_count(&fields, 3)?;
+                Self::check_range(fields[0], fields[2])?;
+                Self::check_range(fields[1], fields[2])?;
                 Ok(IdMap::Bidirectional {
                     guest: fields[0],
                     host: fields[1],
@@ -274,6 +312,25 @@ impl IdMap {
         Ok((prefix, values))
     }
 
+    /// Verifies that `count` is non-zero and `base + count` does not overflow `u32`.
+    fn check_range(base: u32, count: u32) -> Result<(), IdMapError> {
+        if count == 0 {
+            return Err(IdMapError::EmptyRange);
+        }
+        let _ = base
+            .checked_add(count)
+            .ok_or(IdMapError::RangeOverflow { base, count })?;
+        Ok(())
+    }
+
+    /// Rejects `u32::MAX` as a mapping destination.
+    fn check_destination(id: u32) -> Result<(), IdMapError> {
+        if id == crate::fuse::INVALID_UIDGID {
+            return Err(IdMapError::InvalidDestination { id });
+        }
+        Ok(())
+    }
+
     /// Verifies that `args`’s length is `expected_count`, returning an error otherwise.
     fn check_arg_count(args: &[u32], expected_count: usize) -> Result<(), IdMapError> {
         if args.len() != expected_count {
@@ -283,6 +340,98 @@ impl IdMap {
             })
         } else {
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_overflow_rejected() {
+        // count=1 is the tightest overflow: u32::MAX + 1 wraps.
+        let cases = [
+            "guest:4294967295:0:1",
+            "guest:0:4294967295:1",
+            "host:4294967295:0:1",
+            "host:0:4294967295:1",
+            "map:4294967295:0:1",
+            "map:0:4294967295:1",
+            "forbid-guest:4294967295:1",
+            "squash-guest:4294967295:0:1",
+            "squash-host:4294967295:0:1",
+        ];
+        for input in cases {
+            let err = input.parse::<IdMap>().unwrap_err();
+            assert!(
+                matches!(err, IdMapError::RangeOverflow { .. }),
+                "{}: expected RangeOverflow, got: {}",
+                input,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn empty_range_rejected() {
+        let cases = [
+            "guest:0:0:0",
+            "host:0:0:0",
+            "map:0:0:0",
+            "forbid-guest:0:0",
+            "squash-guest:0:0:0",
+            "squash-host:0:0:0",
+        ];
+        for input in cases {
+            let err = input.parse::<IdMap>().unwrap_err();
+            assert!(
+                matches!(err, IdMapError::EmptyRange),
+                "{}: expected EmptyRange, got: {}",
+                input,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn valid_ranges_accepted() {
+        let cases = [
+            "guest:0:1000:100",
+            "host:0:1000:100",
+            "map:0:1000:100",
+            "forbid-guest:0:100",
+            "squash-guest:0:1000:100",
+            "squash-host:0:1000:100",
+        ];
+        for input in cases {
+            assert!(input.parse::<IdMap>().is_ok(), "{}: must succeed", input);
+        }
+    }
+
+    #[test]
+    fn invalid_destination_rejected() {
+        let cases = [
+            "squash-guest:0:4294967295:100",
+            "squash-host:0:4294967295:100",
+        ];
+        for input in cases {
+            let err = input.parse::<IdMap>().unwrap_err();
+            assert!(
+                matches!(err, IdMapError::InvalidDestination { .. }),
+                "{}: expected InvalidDestination, got: {}",
+                input,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn max_valid_range_accepted() {
+        // base=0, count=u32::MAX covers 0..4294967295 (excludes u32::MAX itself).
+        let cases = ["guest:0:0:4294967295", "forbid-guest:0:4294967295"];
+        for input in cases {
+            assert!(input.parse::<IdMap>().is_ok(), "{}: must succeed", input);
         }
     }
 }

@@ -2373,6 +2373,10 @@ impl FileSystem for PassthroughFs {
             return Ok(());
         }
 
+        if !ctx.uid.is_valid() || !ctx.gid.is_valid() {
+            return Err(io::Error::from_raw_os_error(libc::EOVERFLOW));
+        }
+
         // We use ctx.uid/ctx.gid for these checks, but when idmapped mounts
         // support is enabled on the guest side, it means that "default_permissions"
         // flag is set on virtiofs mount and FUSE_ACCESS request should never be

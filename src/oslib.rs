@@ -614,13 +614,25 @@ pub fn pipe() -> io::Result<(PipeReader, PipeWriter)> {
 // setfsgid systems calls. However since those calls have no way to
 // return an error, it's preferable to do this instead.
 /// Set effective user ID
+///
+/// Rejects `fuse::INVALID_UIDGID` because the kernel treats `(uid_t)-1` as
+/// "do not change" in `setresuid`. This silently keeps the current euid.
 pub fn seteffuid(uid: HostUid) -> io::Result<()> {
+    if !uid.is_valid() {
+        return Err(io::Error::from_raw_os_error(libc::EOVERFLOW));
+    }
     check_retval(unsafe { libc::syscall(libc::SYS_setresuid, -1, uid.into_inner(), -1) })?;
     Ok(())
 }
 
 /// Set effective group ID
+///
+/// Rejects `fuse::INVALID_UIDGID` because the kernel treats `(gid_t)-1` as
+/// "do not change" in `setresgid`. This silently keeps the current egid.
 pub fn seteffgid(gid: HostGid) -> io::Result<()> {
+    if !gid.is_valid() {
+        return Err(io::Error::from_raw_os_error(libc::EOVERFLOW));
+    }
     check_retval(unsafe { libc::syscall(libc::SYS_setresgid, -1, gid.into_inner(), -1) })?;
     Ok(())
 }
@@ -644,4 +656,23 @@ pub fn dropsupgroups() -> io::Result<()> {
         libc::syscall(libc::SYS_setgroups, 0, std::ptr::null::<libc::gid_t>())
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seteffuid_rejects_invalid_uidgid() {
+        let uid = HostUid::from(crate::fuse::INVALID_UIDGID);
+        let result = seteffuid(uid);
+        assert!(result.is_err(), "seteffuid must reject INVALID_UIDGID");
+    }
+
+    #[test]
+    fn seteffgid_rejects_invalid_uidgid() {
+        let gid = HostGid::from(crate::fuse::INVALID_UIDGID);
+        let result = seteffgid(gid);
+        assert!(result.is_err(), "seteffgid must reject INVALID_UIDGID");
+    }
 }
