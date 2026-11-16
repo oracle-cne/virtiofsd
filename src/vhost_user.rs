@@ -665,7 +665,7 @@ impl<F: FileSystem + SerializableFileSystem + Send + Sync + 'static> VhostUserFs
                     }
 
                     server
-                        .serialize(file)
+                        .serialize(file, None)
                         .map_err(|e| io::Error::new(e.kind(), format!("Failed to save state: {e}")))
                 })
             }
@@ -679,9 +679,10 @@ impl<F: FileSystem + SerializableFileSystem + Send + Sync + 'static> VhostUserFs
                 }
 
                 thread::spawn(move || {
-                    server
-                        .deserialize_and_apply(file)
-                        .map_err(|e| io::Error::new(e.kind(), format!("Failed to load state: {e}")))
+                    server.deserialize_and_apply(file).map_err(|e| {
+                        io::Error::new(e.kind(), format!("Failed to load state: {e}"))
+                    })?;
+                    Ok(())
                 })
             }
         };

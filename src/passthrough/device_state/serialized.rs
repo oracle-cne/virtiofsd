@@ -23,6 +23,9 @@ pub(super) enum PassthroughFs {
 
     /// Version with mount point paths (for migrating file handles)
     V2(PassthroughFsV2),
+
+    /// Version with opaque extra state from outer layers
+    V3(PassthroughFsV3),
 }
 
 /// v1 of our serialized migration stream.
@@ -56,6 +59,16 @@ pub(super) struct PassthroughFsV2 {
      * file handles created by the source, to pass them to `open_by_handle_at()`.
      */
     pub(super) mount_paths: HashMap<u64, String>,
+}
+
+/// v3 of our serialized migration stream.
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct PassthroughFsV3 {
+    /// All v2 fields
+    pub(super) v2: PassthroughFsV2,
+
+    /// Opaque state from outer layers. Passed through unchanged.
+    pub(super) extra_state: Option<Vec<u8>>,
 }
 
 /// Options that can be negotiated during INIT, i.e. ones for which we must remember whether we

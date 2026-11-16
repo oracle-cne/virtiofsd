@@ -1468,17 +1468,39 @@ impl<F: FileSystem + Sync> Server<F> {
     }
 }
 
+// Versioned server-level state.
+// In case incompatible changes have to be made, new version variants
+// can be added while still being able to migrate from older versions.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum ServerState {
+    /// Contains the negotiated FUSE options bitmask.
+    V1(u64),
+}
+
 impl<F: FileSystem + SerializableFileSystem + Sync> SerializableFileSystem for Server<F> {
     fn prepare_serialization(&self, cancel: Arc<AtomicBool>) {
         self.fs.prepare_serialization(cancel)
     }
 
-    fn serialize(&self, state_pipe: File) -> io::Result<()> {
-        self.fs.serialize(state_pipe)
+    fn serialize(&self, state_pipe: File, extra_state: Option<&[u8]>) -> io::Result<()> {
+        debug_assert!(extra_state.is_none());
+
+        let server_state = ServerState::V1(self.options.load(Ordering::Relaxed));
+        let encoded = postcard::to_stdvec(&server_state).map_err(io::Error::other)?;
+        self.fs.serialize(state_pipe, Some(&encoded))
     }
 
-    fn deserialize_and_apply(&self, state_pipe: File) -> io::Result<()> {
-        self.fs.deserialize_and_apply(state_pipe)
+    fn deserialize_and_apply(&self, state_pipe: File) -> io::Result<Option<Vec<u8>>> {
+        let extra_state = self.fs.deserialize_and_apply(state_pipe)?;
+        if let Some(ref blob) = extra_state {
+            let server_state: ServerState = postcard::from_bytes(blob).map_err(io::Error::other)?;
+            match server_state {
+                ServerState::V1(options) => {
+                    self.options.store(options, Ordering::Relaxed);
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

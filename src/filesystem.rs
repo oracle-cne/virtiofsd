@@ -1037,10 +1037,12 @@ pub trait SerializableFileSystem {
     /// Called during migration on the source side, when the vhost front-end requests this state in
     /// order to put it into its migration stream and transfer it to the destination.
     ///
+    /// `extra_state` is opaque state from an outer layer.
+    ///
     /// This function should finish quickly and not perform complex tasks.  If such tasks are
     /// necessary, they should be started by `prepare_serialization()` so they can be done in time
     /// for `serialize()`.
-    fn serialize(&self, _state_pipe: File) -> io::Result<()> {
+    fn serialize(&self, _state_pipe: File, _extra_state: Option<&[u8]>) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "State serialization not supported",
@@ -1053,8 +1055,11 @@ pub trait SerializableFileSystem {
     /// state from the source.  We should deserialize and apply it, so we can resume where the
     /// source has left off.
     ///
+    /// Returns the extra state from the source.  Returns `None` when the source did not provide
+    /// one.
+    ///
     /// This function should finish quickly.  Any complex tasks should be deferred, if possible.
-    fn deserialize_and_apply(&self, _state_pipe: File) -> io::Result<()> {
+    fn deserialize_and_apply(&self, _state_pipe: File) -> io::Result<Option<Vec<u8>>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "State deserialization not supported",

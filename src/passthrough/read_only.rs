@@ -432,7 +432,7 @@ impl FileSystem for PassthroughFsRo {
 impl SerializableFileSystem for PassthroughFsRo {
     ops_allow! {
         fn prepare_serialization(&self, cancel: Arc<AtomicBool>);
-        fn serialize(&self, state_pipe: File) -> io::Result<()>;
-        fn deserialize_and_apply(&self, state_pipe: File) -> io::Result<()>;
+        fn serialize(&self, state_pipe: File, extra_state: Option<&[u8]>) -> io::Result<()>;
+        fn deserialize_and_apply(&self, state_pipe: File) -> io::Result<Option<Vec<u8>>>;
     }
 }
