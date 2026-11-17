@@ -972,7 +972,7 @@ impl PassthroughFs {
             inode: unsafe { inode.leak() },
             generation: 0,
             attr,
-            attr_timeout: self.cfg.attr_timeout,
+            attr_timeout: self.get_attr_timeout(st.st.st_mode),
             entry_timeout: self.cfg.entry_timeout,
         })
     }
@@ -1070,7 +1070,18 @@ impl PassthroughFs {
             |gid| self.map_host_gid(gid),
         )?;
 
-        Ok((attr, self.cfg.attr_timeout))
+        Ok((attr, self.get_attr_timeout(st.st_mode)))
+    }
+
+    fn get_attr_timeout(&self, mode: u32) -> Duration {
+        if self.cfg.killpriv_v2
+            && FileType::from_mode(mode).is_regular_file()
+            && mode & (libc::S_ISUID | libc::S_ISGID) != 0
+        {
+            Duration::ZERO
+        } else {
+            self.cfg.attr_timeout
+        }
     }
 
     fn do_unlink(&self, parent: Inode, name: &CStr, flags: libc::c_int) -> io::Result<()> {
