@@ -34,7 +34,7 @@ clippy:
   script:
     # clippy seems to have a bug where it is suggesting using C string literals
     # despite it not being possible in the project's edition (2018 in our case).
-    - cargo clippy --verbose -- -Dwarnings -Aclippy::manual-c-str-literals
+    - cargo clippy --verbose --features postcopy -- -Dwarnings -Aclippy::manual-c-str-literals
 
 fmt:
   before_script:
@@ -47,8 +47,8 @@ test:
     - apk add libcap-ng-static libseccomp-static musl-dev
   script:
     - rustc --version && cargo --version  # Print version info for debugging
-    - RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=yes' LIBSECCOMP_LINK_TYPE=static LIBSECCOMP_LIB_PATH=/usr/lib LIBCAPNG_LINK_TYPE=static LIBCAPNG_LIB_PATH=/usr/lib cargo build --verbose --target x86_64-unknown-linux-musl
-    - RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=yes' LIBSECCOMP_LINK_TYPE=static LIBSECCOMP_LIB_PATH=/usr/lib LIBCAPNG_LINK_TYPE=static LIBCAPNG_LIB_PATH=/usr/lib cargo test --verbose --target x86_64-unknown-linux-musl
+    - RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=yes' LIBSECCOMP_LINK_TYPE=static LIBSECCOMP_LIB_PATH=/usr/lib LIBCAPNG_LINK_TYPE=static LIBCAPNG_LIB_PATH=/usr/lib cargo build --verbose --target x86_64-unknown-linux-musl --features postcopy
+    - RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=yes' LIBSECCOMP_LINK_TYPE=static LIBSECCOMP_LIB_PATH=/usr/lib LIBCAPNG_LINK_TYPE=static LIBCAPNG_LIB_PATH=/usr/lib cargo test --verbose --target x86_64-unknown-linux-musl --features postcopy
   except:
       # There is an equivalent job ('publish') that will run when code lands
       # on the 'main' branch, except it will upload a built binary. These are
@@ -62,11 +62,14 @@ test:
 # library, so cargo doc can only generate one or the other.  We could generate
 # both, manually renaming the binary folder, but then again there isn’t really
 # anything important in main.rs anyway.
+# vhost rejects 'postcopy' and 'xen' together. We chose to build with 'postcopy',
+# thus 'xen' is not build at all.
 docs:
   before_script:
     - apk add musl-dev
   script:
-    - RUSTDOCFLAGS="-D warnings" cargo doc --verbose --no-deps --all-features --document-private-items
+    # 'xen' is not documented
+    - RUSTDOCFLAGS="-D warnings" cargo doc --verbose --no-deps --features postcopy --document-private-items
   artifacts:
     paths:
       - target/doc

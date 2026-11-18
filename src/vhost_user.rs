@@ -483,6 +483,10 @@ impl<F: FileSystem + SerializableFileSystem + Send + Sync + 'static> VhostUserBa
             protocol_features |= VhostUserProtocolFeatures::CONFIG;
         }
 
+        if cfg!(feature = "postcopy") {
+            protocol_features |= VhostUserProtocolFeatures::PAGEFAULT;
+        }
+
         protocol_features
     }
 

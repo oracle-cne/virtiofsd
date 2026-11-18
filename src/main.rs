@@ -510,6 +510,9 @@ fn print_capabilities() {
     println!("{{");
     println!("  \"type\": \"fs\",");
     println!("  \"features\": [");
+    if cfg!(feature = "postcopy") {
+        println!("    \"migrate-postcopy\",");
+    }
     println!("    \"migrate-precopy\",");
     println!("    \"posix-acl-negotiation-mode\",");
     println!("    \"security-label-negotiation-mode\",");
