@@ -409,7 +409,7 @@ impl MountFds {
         Ok(mount_fd)
     }
 
-    /// Given a mount ID, return the mount root path (by reading `/proc/self/mountinfo`)
+    /// Given a mount ID, return the mount point path (by reading `/proc/self/mountinfo`).
     pub fn get_mount_root(&self, mount_id: MountId) -> MPRResult<String> {
         let mountinfo = {
             let mountinfo_file = &mut *self.mountinfo.lock().unwrap();
@@ -419,8 +419,9 @@ impl MountFds {
                     .prefix("Failed to access /proc/self/mountinfo".into())
             })?;
 
-            let mut mountinfo = String::new();
-            mountinfo_file.read_to_string(&mut mountinfo).map_err(|e| {
+            // Read as bytes because mountinfo entries can contain non-UTF-8 path names.
+            let mut mountinfo = Vec::new();
+            mountinfo_file.read_to_end(&mut mountinfo).map_err(|e| {
                 self.error_for_nolookup(mount_id, e)
                     .prefix("Failed to read /proc/self/mountinfo".into())
             })?;
@@ -428,21 +429,31 @@ impl MountFds {
             mountinfo
         };
 
-        let path = mountinfo.split('\n').find_map(|line| {
-            let mut columns = line.split(' ');
+        let mount_id_str = mount_id.to_string();
+        let path = mountinfo.split(|&b| b == b'\n').find_map(|line| {
+            // mountinfo fields: [0]mount_id [1]parent_id [2]major:minor [3]root [4]mount_point ...
+            // Split past mount_point (6 items).
+            let mut columns = line.splitn(6, |&b| b == b' ');
 
-            if columns.next()?.parse::<MountId>().ok()? != mount_id {
+            if columns.next()? != mount_id_str.as_bytes() {
                 return None;
             }
 
             // Skip parent mount ID, major:minor device ID, and the root within the filesystem
-            // (to get to the mount path)
+            // (to get to the mount point)
             columns.nth(3)
         });
 
         match path {
             Some(p) => {
-                let p = String::from(p);
+                let p = std::str::from_utf8(p)
+                    .map_err(|_| {
+                        self.error_for_nolookup(mount_id, einval())
+                            .set_desc(format!(
+                                "Mount point for mount ID {mount_id} is not valid UTF-8"
+                            ))
+                    })?
+                    .to_string();
                 if let Some(prefix) = self.mountprefix.as_ref() {
                     if let Some(suffix) = p.strip_prefix(prefix).filter(|s| !s.is_empty()) {
                         Ok(suffix.into())
@@ -511,8 +522,12 @@ mod tests {
     use vmm_sys_util::tempfile::TempFile;
 
     fn fake_mount_fds(contents: &str, prefix: Option<&str>) -> MountFds {
+        fake_mount_fds_bytes(contents.as_bytes(), prefix)
+    }
+
+    fn fake_mount_fds_bytes(contents: &[u8], prefix: Option<&str>) -> MountFds {
         let mountinfo = TempFile::new().unwrap();
-        mountinfo.as_file().write_all(contents.as_bytes()).unwrap();
+        mountinfo.as_file().write_all(contents).unwrap();
         MountFds::new(
             mountinfo.as_file().try_clone().unwrap(),
             prefix.map(String::from),
@@ -544,6 +559,25 @@ mod tests {
             let mfds = fake_mount_fds(line, prefix);
             assert_eq!(mfds.get_mount_root(42).unwrap(), expected, "{line}");
         }
+    }
+
+    #[test]
+    fn get_mount_root_skips_non_utf8_lines() {
+        let mut contents = Vec::new();
+        // mount point with non-UTF-8 path (raw 0xFF byte)
+        contents.extend_from_slice(b"10 1 8:2 / /mnt/\xff rw - ext4 /dev/sdb rw\n");
+        contents.extend_from_slice(b"42 1 8:1 / /mnt rw - ext4 /dev/sda rw\n");
+        let mfds = fake_mount_fds_bytes(&contents, None);
+        assert_eq!(mfds.get_mount_root(42).unwrap(), "/mnt");
+    }
+
+    #[test]
+    fn get_mount_root_rejects_non_utf8_mount_point() {
+        let mut contents = Vec::new();
+        contents.extend_from_slice(b"42 1 8:1 / /mnt/\xff rw - ext4 /dev/sda rw\n");
+        let mfds = fake_mount_fds_bytes(&contents, None);
+        let err = mfds.get_mount_root(42).unwrap_err();
+        assert_eq!(err.into_inner().raw_os_error(), Some(libc::EINVAL));
     }
 
     #[test]
