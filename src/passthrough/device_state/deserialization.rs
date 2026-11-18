@@ -95,7 +95,7 @@ impl serialized::PassthroughFsV1 {
                 .err_context(|| "Cannot open shared directory")?;
 
             mount_paths.into_iter().filter_map(|(mount_id, mount_path)| {
-                match MountFd::new(fs.mount_fds.as_ref(), &root_node_file, &mount_path) {
+                match MountFd::new(&fs.os_facts, fs.mount_fds.as_ref(), &root_node_file, &mount_path, &fs.proc_self_fd) {
                     Ok(mount_fd) => Some((mount_id, mount_fd)),
                     Err(err) => {
                         warn!(
