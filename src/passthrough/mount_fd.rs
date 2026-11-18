@@ -3,7 +3,7 @@
 
 use crate::oslib::OsFacts;
 use crate::passthrough::stat::{statx, MountId};
-use crate::passthrough::util::{get_path_by_fd, open_relative_to};
+use crate::passthrough::util::{einval, get_path_by_fd, open_relative_to};
 use crate::util::{other_io_error, ResultErrorContext};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -458,7 +458,7 @@ impl MountFds {
             }
 
             None => Err(self
-                .error_for_nolookup(mount_id, io::Error::from_raw_os_error(libc::EINVAL))
+                .error_for_nolookup(mount_id, einval())
                 .set_desc(format!("Failed to find mount root for mount ID {mount_id}"))),
         }
     }
