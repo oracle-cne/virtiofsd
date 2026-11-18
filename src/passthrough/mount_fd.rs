@@ -446,14 +446,13 @@ impl MountFds {
 
         match path {
             Some(p) => {
-                let p = std::str::from_utf8(p)
-                    .map_err(|_| {
-                        self.error_for_nolookup(mount_id, einval())
-                            .set_desc(format!(
-                                "Mount point for mount ID {mount_id} is not valid UTF-8"
-                            ))
-                    })?
-                    .to_string();
+                let p = std::str::from_utf8(p).map_err(|_| {
+                    self.error_for_nolookup(mount_id, einval())
+                        .set_desc(format!(
+                            "Mount point for mount ID {mount_id} is not valid UTF-8"
+                        ))
+                })?;
+                let p = demangle_path(p);
                 if let Some(prefix) = self.mountprefix.as_ref() {
                     if let Some(suffix) = p.strip_prefix(prefix).filter(|s| !s.is_empty()) {
                         Ok(suffix.into())
@@ -515,6 +514,28 @@ impl MountFds {
     }
 }
 
+// Decode octal escapes (`\NNN`) produced by the kernel's `mangle_path()` (fs/seq_file.c).
+fn demangle_path(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        match rest.get(1..4).and_then(|d| u8::from_str_radix(d, 8).ok()) {
+            Some(byte) => {
+                out.push(byte as char);
+                rest = &rest[4..];
+            }
+            None => {
+                out.push('\\');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,7 +562,7 @@ mod tests {
             (
                 "42 1 8:1 / /mnt/has\\011tab rw - ext4 /dev/sda rw\n",
                 None,
-                "/mnt/has\\011tab",
+                "/mnt/has\ttab",
             ),
             // Prefix stripping
             (
@@ -585,5 +606,21 @@ mod tests {
         let mfds = fake_mount_fds("42 1 8:1 / /mnt rw - ext4 /dev/sda rw\n", None);
         let err = mfds.get_mount_root(99).unwrap_err();
         assert_eq!(err.into_inner().raw_os_error(), Some(libc::EINVAL));
+    }
+
+    #[test]
+    fn demangle_path_decodes_octal_escapes() {
+        for (input, expected) in [
+            ("/plain/path", "/plain/path"),
+            ("/mnt/has\\040space", "/mnt/has space"),
+            ("/mnt/has\\011tab", "/mnt/has\ttab"),
+            ("/mnt/has\\012newline", "/mnt/has\nnewline"),
+            ("/back\\134slash", "/back\\slash"),
+            ("/multi\\040and\\011mixed", "/multi and\tmixed"),
+            ("/not\\an\\escape", "/not\\an\\escape"),
+            ("/trailing\\", "/trailing\\"),
+        ] {
+            assert_eq!(demangle_path(input), expected, "{input}");
+        }
     }
 }
