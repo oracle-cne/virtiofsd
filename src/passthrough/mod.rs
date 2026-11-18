@@ -655,14 +655,8 @@ impl PassthroughFs {
         flags: i32,
         mode: Option<u32>,
     ) -> io::Result<OwnedFd> {
-        let dir = dir.as_fd();
-        let flags = libc::O_NOFOLLOW | libc::O_CLOEXEC | flags;
-
-        if self.os_facts.has_openat2 {
-            oslib::do_open_relative_to(&dir, pathname, flags, mode)
-        } else {
-            oslib::openat(&dir, pathname, flags, mode)
-        }
+        let flags = libc::O_NOFOLLOW | flags;
+        util::open_relative_to(&self.os_facts, dir, pathname, flags, mode)
     }
 
     fn find_handle(&self, handle: Handle, inode: Inode) -> io::Result<Arc<HandleData>> {
