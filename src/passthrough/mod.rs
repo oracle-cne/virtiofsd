@@ -926,7 +926,12 @@ impl PassthroughFs {
                 FileOrHandle::File(self.guest_fds.allocate(path_fd)?)
             };
 
-            let mig_info = if self.track_migration_info.load(Ordering::Relaxed) {
+            let mig_info = if self.track_migration_info.load(Ordering::Relaxed)
+                // "." and ".." are not valid names for migration info (required for NFS support).
+                // Unlikely, they probably resolve to inodes already in the store.
+                && name.to_bytes() != b"."
+                && name.to_bytes() != b".."
+            {
                 let parent_strong_ref = StrongInodeReference::new_with_data(p, &self.inodes)?;
                 Some(InodeMigrationInfo::new(
                     &self.cfg,
