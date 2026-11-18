@@ -429,7 +429,7 @@ impl MountFds {
         };
 
         let path = mountinfo.split('\n').find_map(|line| {
-            let mut columns = line.split(char::is_whitespace);
+            let mut columns = line.split(' ');
 
             if columns.next()?.parse::<MountId>().ok()? != mount_id {
                 return None;
@@ -501,5 +501,55 @@ impl MountFds {
                 err
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use vmm_sys_util::tempfile::TempFile;
+
+    fn fake_mount_fds(contents: &str, prefix: Option<&str>) -> MountFds {
+        let mountinfo = TempFile::new().unwrap();
+        mountinfo.as_file().write_all(contents.as_bytes()).unwrap();
+        MountFds::new(
+            mountinfo.as_file().try_clone().unwrap(),
+            prefix.map(String::from),
+        )
+    }
+
+    #[test]
+    fn get_mount_root_parses_mount_point() {
+        for (line, prefix, expected) in [
+            // Escaped tab in mount point must not split the field
+            (
+                "42 1 8:1 / /mnt/has\\011tab rw - ext4 /dev/sda rw\n",
+                None,
+                "/mnt/has\\011tab",
+            ),
+            // Prefix stripping
+            (
+                "42 1 8:1 / /shared/child rw - ext4 /dev/sda rw\n",
+                Some("/shared"),
+                "/child",
+            ),
+            // Prefix equals mount point
+            (
+                "42 1 8:1 / /shared rw - ext4 /dev/sda rw\n",
+                Some("/shared"),
+                "/",
+            ),
+        ] {
+            let mfds = fake_mount_fds(line, prefix);
+            assert_eq!(mfds.get_mount_root(42).unwrap(), expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn get_mount_root_not_found() {
+        let mfds = fake_mount_fds("42 1 8:1 / /mnt rw - ext4 /dev/sda rw\n", None);
+        let err = mfds.get_mount_root(99).unwrap_err();
+        assert_eq!(err.into_inner().raw_os_error(), Some(libc::EINVAL));
     }
 }
