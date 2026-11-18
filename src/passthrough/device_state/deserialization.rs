@@ -9,6 +9,7 @@
  * there to a `PassthroughFs`, restoring the state from the migration source.
  */
 
+use crate::filename::FileName;
 use crate::fuse;
 use crate::passthrough::device_state::preserialization::HandleMigrationInfo;
 use crate::passthrough::device_state::serialized;
@@ -16,7 +17,7 @@ use crate::passthrough::file_handle::SerializableFileHandle;
 use crate::passthrough::inode_store::{InodeData, InodeIds, StrongInodeReference};
 use crate::passthrough::mount_fd::MountFd;
 use crate::passthrough::stat::statx;
-use crate::passthrough::util::{openat, printable_fd};
+use crate::passthrough::util::printable_fd;
 use crate::passthrough::{
     FileOrHandle, FileType, HandleData, HandleDataFile, InodeFileHandlesMode, MigrationOnError,
     NegotiationMode, PassthroughFs,
@@ -24,6 +25,7 @@ use crate::passthrough::{
 use crate::util::{other_io_error, ErrorContext, ResultErrorContext};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::{TryFrom, TryInto};
+use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -270,6 +272,9 @@ impl serialized::Inode {
                 Ok(true)
             }
 
+            // `FileName` validation in `deserialize_path()` limits this to
+            // single-component names. `InodeLocation::FullPath` is not
+            // currently serialized.
             serialized::InodeLocation::FullPath { filename } => {
                 if self.id == fuse::ROOT_ID {
                     return Err(other_io_error(
@@ -351,21 +356,24 @@ impl serialized::Inode {
         filename: &str,
     ) -> io::Result<InodeData> {
         let parent_fd = parent.get().get_file()?;
-        let fd = openat(
-            &parent_fd,
-            filename,
-            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-        .map_err(|err| {
-            let pfd = printable_fd(&parent_fd, Some(&fs.proc_self_fd));
-            io::Error::new(
-                err.kind(),
-                format!(
-                    "Opening {pfd}{}{filename}: {err}",
-                    if pfd.ends_with('/') { "" } else { "/" },
-                ),
-            )
+        let filename_c = CString::new(filename).map_err(other_io_error)?;
+        FileName::try_from(filename_c.to_bytes_with_nul()).map_err(|_| {
+            other_io_error(format!(
+                "Invalid filename in migration stream: {filename:?}"
+            ))
         })?;
+        let fd = fs
+            .open_relative_to(&parent_fd, &filename_c, libc::O_PATH, None)
+            .map_err(|err| {
+                let pfd = printable_fd(&parent_fd, Some(&fs.proc_self_fd));
+                io::Error::new(
+                    err.kind(),
+                    format!(
+                        "Opening {pfd}{}{filename}: {err}",
+                        if pfd.ends_with('/') { "" } else { "/" },
+                    ),
+                )
+            })?;
 
         let st = statx(&fd, None)?;
         let handle = fs.get_file_handle_opt(&fd, &st)?;
@@ -373,7 +381,7 @@ impl serialized::Inode {
         let file_or_handle = if let Some(h) = handle.as_ref() {
             FileOrHandle::Handle(fs.make_file_handle_openable(h)?)
         } else {
-            FileOrHandle::File(fs.guest_fds.allocate(fd)?)
+            FileOrHandle::File(fs.guest_fds.allocate(fd.into())?)
         };
 
         Ok(InodeData {
