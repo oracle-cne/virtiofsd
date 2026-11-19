@@ -3,7 +3,7 @@
 
 use crate::oslib::OsFacts;
 use crate::passthrough::stat::{statx, MountId};
-use crate::passthrough::util::{get_path_by_fd, open_relative_to};
+use crate::passthrough::util::{einval, get_path_by_fd, open_relative_to};
 use crate::util::{other_io_error, ResultErrorContext};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -409,7 +409,7 @@ impl MountFds {
         Ok(mount_fd)
     }
 
-    /// Given a mount ID, return the mount root path (by reading `/proc/self/mountinfo`)
+    /// Given a mount ID, return the mount point path (by reading `/proc/self/mountinfo`).
     pub fn get_mount_root(&self, mount_id: MountId) -> MPRResult<String> {
         let mountinfo = {
             let mountinfo_file = &mut *self.mountinfo.lock().unwrap();
@@ -419,8 +419,9 @@ impl MountFds {
                     .prefix("Failed to access /proc/self/mountinfo".into())
             })?;
 
-            let mut mountinfo = String::new();
-            mountinfo_file.read_to_string(&mut mountinfo).map_err(|e| {
+            // Read as bytes because mountinfo entries can contain non-UTF-8 path names.
+            let mut mountinfo = Vec::new();
+            mountinfo_file.read_to_end(&mut mountinfo).map_err(|e| {
                 self.error_for_nolookup(mount_id, e)
                     .prefix("Failed to read /proc/self/mountinfo".into())
             })?;
@@ -428,21 +429,30 @@ impl MountFds {
             mountinfo
         };
 
-        let path = mountinfo.split('\n').find_map(|line| {
-            let mut columns = line.split(char::is_whitespace);
+        let mount_id_str = mount_id.to_string();
+        let path = mountinfo.split(|&b| b == b'\n').find_map(|line| {
+            // mountinfo fields: [0]mount_id [1]parent_id [2]major:minor [3]root [4]mount_point ...
+            // Split past mount_point (6 items).
+            let mut columns = line.splitn(6, |&b| b == b' ');
 
-            if columns.next()?.parse::<MountId>().ok()? != mount_id {
+            if columns.next()? != mount_id_str.as_bytes() {
                 return None;
             }
 
             // Skip parent mount ID, major:minor device ID, and the root within the filesystem
-            // (to get to the mount path)
+            // (to get to the mount point)
             columns.nth(3)
         });
 
         match path {
             Some(p) => {
-                let p = String::from(p);
+                let p = std::str::from_utf8(p).map_err(|_| {
+                    self.error_for_nolookup(mount_id, einval())
+                        .set_desc(format!(
+                            "Mount point for mount ID {mount_id} is not valid UTF-8"
+                        ))
+                })?;
+                let p = demangle_path(p);
                 if let Some(prefix) = self.mountprefix.as_ref() {
                     if let Some(suffix) = p.strip_prefix(prefix).filter(|s| !s.is_empty()) {
                         Ok(suffix.into())
@@ -458,7 +468,7 @@ impl MountFds {
             }
 
             None => Err(self
-                .error_for_nolookup(mount_id, io::Error::from_raw_os_error(libc::EINVAL))
+                .error_for_nolookup(mount_id, einval())
                 .set_desc(format!("Failed to find mount root for mount ID {mount_id}"))),
         }
     }
@@ -500,6 +510,117 @@ impl MountFds {
             } else {
                 err
             }
+        }
+    }
+}
+
+// Decode octal escapes (`\NNN`) produced by the kernel's `mangle_path()` (fs/seq_file.c).
+fn demangle_path(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        match rest.get(1..4).and_then(|d| u8::from_str_radix(d, 8).ok()) {
+            Some(byte) => {
+                out.push(byte as char);
+                rest = &rest[4..];
+            }
+            None => {
+                out.push('\\');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use vmm_sys_util::tempfile::TempFile;
+
+    fn fake_mount_fds(contents: &str, prefix: Option<&str>) -> MountFds {
+        fake_mount_fds_bytes(contents.as_bytes(), prefix)
+    }
+
+    fn fake_mount_fds_bytes(contents: &[u8], prefix: Option<&str>) -> MountFds {
+        let mountinfo = TempFile::new().unwrap();
+        mountinfo.as_file().write_all(contents).unwrap();
+        MountFds::new(
+            mountinfo.as_file().try_clone().unwrap(),
+            prefix.map(String::from),
+        )
+    }
+
+    #[test]
+    fn get_mount_root_parses_mount_point() {
+        for (line, prefix, expected) in [
+            // Escaped tab in mount point must not split the field
+            (
+                "42 1 8:1 / /mnt/has\\011tab rw - ext4 /dev/sda rw\n",
+                None,
+                "/mnt/has\ttab",
+            ),
+            // Prefix stripping
+            (
+                "42 1 8:1 / /shared/child rw - ext4 /dev/sda rw\n",
+                Some("/shared"),
+                "/child",
+            ),
+            // Prefix equals mount point
+            (
+                "42 1 8:1 / /shared rw - ext4 /dev/sda rw\n",
+                Some("/shared"),
+                "/",
+            ),
+        ] {
+            let mfds = fake_mount_fds(line, prefix);
+            assert_eq!(mfds.get_mount_root(42).unwrap(), expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn get_mount_root_skips_non_utf8_lines() {
+        let mut contents = Vec::new();
+        // mount point with non-UTF-8 path (raw 0xFF byte)
+        contents.extend_from_slice(b"10 1 8:2 / /mnt/\xff rw - ext4 /dev/sdb rw\n");
+        contents.extend_from_slice(b"42 1 8:1 / /mnt rw - ext4 /dev/sda rw\n");
+        let mfds = fake_mount_fds_bytes(&contents, None);
+        assert_eq!(mfds.get_mount_root(42).unwrap(), "/mnt");
+    }
+
+    #[test]
+    fn get_mount_root_rejects_non_utf8_mount_point() {
+        let mut contents = Vec::new();
+        contents.extend_from_slice(b"42 1 8:1 / /mnt/\xff rw - ext4 /dev/sda rw\n");
+        let mfds = fake_mount_fds_bytes(&contents, None);
+        let err = mfds.get_mount_root(42).unwrap_err();
+        assert_eq!(err.into_inner().raw_os_error(), Some(libc::EINVAL));
+    }
+
+    #[test]
+    fn get_mount_root_not_found() {
+        let mfds = fake_mount_fds("42 1 8:1 / /mnt rw - ext4 /dev/sda rw\n", None);
+        let err = mfds.get_mount_root(99).unwrap_err();
+        assert_eq!(err.into_inner().raw_os_error(), Some(libc::EINVAL));
+    }
+
+    #[test]
+    fn demangle_path_decodes_octal_escapes() {
+        for (input, expected) in [
+            ("/plain/path", "/plain/path"),
+            ("/mnt/has\\040space", "/mnt/has space"),
+            ("/mnt/has\\011tab", "/mnt/has\ttab"),
+            ("/mnt/has\\012newline", "/mnt/has\nnewline"),
+            ("/back\\134slash", "/back\\slash"),
+            ("/multi\\040and\\011mixed", "/multi and\tmixed"),
+            ("/not\\an\\escape", "/not\\an\\escape"),
+            ("/trailing\\", "/trailing\\"),
+        ] {
+            assert_eq!(demangle_path(input), expected, "{input}");
         }
     }
 }
