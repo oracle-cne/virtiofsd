@@ -807,7 +807,7 @@ impl PassthroughFs {
         let root_dir = openat_verbose(
             &libc::AT_FDCWD,
             self.cfg.root_dir.as_str(),
-            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            libc::O_PATH | libc::O_CLOEXEC,
         )?;
 
         let st = statx(&root_dir, None)?;
@@ -1335,7 +1335,7 @@ impl PassthroughFs {
         let path_fd = openat(
             &libc::AT_FDCWD,
             self.cfg.root_dir.as_str(),
-            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            libc::O_PATH | libc::O_CLOEXEC,
         )?;
 
         let st = statx(&path_fd, None)?;
