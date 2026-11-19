@@ -1,10 +1,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE-BSD-3-Clause file.
 
+use crate::oslib::{self, OsFacts};
 use crate::util::{other_io_error, ErrorContext, ResultErrorContext};
 use std::ffi::{CStr, CString};
 use std::fs::File;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::{fmt, io};
 
@@ -35,6 +36,24 @@ pub fn openat(dir_fd: &impl AsRawFd, path: &str, flags: libc::c_int) -> io::Resu
 /// value will be clobbered.
 pub fn openat_verbose(dir_fd: &impl AsRawFd, path: &str, flags: libc::c_int) -> io::Result<File> {
     openat(dir_fd, path, flags).err_context(|| path)
+}
+
+/// Open `pathname` relative to `dir`, using `openat2(RESOLVE_IN_ROOT)` when available to confine
+/// path resolution. Falls back to `openat()` on kernels without `openat2` (< 5.6).
+pub fn open_relative_to(
+    os_facts: &OsFacts,
+    dir: impl AsFd,
+    pathname: &CStr,
+    flags: i32,
+    mode: Option<u32>,
+) -> io::Result<OwnedFd> {
+    let dir = dir.as_fd();
+    let flags = libc::O_CLOEXEC | flags;
+    if os_facts.has_openat2 {
+        oslib::do_open_relative_to(&dir, pathname, flags, mode)
+    } else {
+        oslib::openat(&dir, pathname, flags, mode)
+    }
 }
 
 /// Open `/proc/self/fd/{fd}` with the given flags to effectively duplicate the given `fd` with new

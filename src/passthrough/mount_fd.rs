@@ -1,15 +1,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE-BSD-3-Clause file.
 
+use crate::oslib::OsFacts;
 use crate::passthrough::stat::{statx, MountId};
-use crate::passthrough::util::openat;
-use crate::util::ResultErrorContext;
+use crate::passthrough::util::{get_path_by_fd, open_relative_to};
+use crate::util::{other_io_error, ResultErrorContext};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek};
 use std::os::fd::{AsFd, BorrowedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 pub struct MountFd {
@@ -56,15 +60,24 @@ impl MountFd {
      * ID is taken from `statx()` instead of using the source’s ID.)
      */
     pub fn new<D: AsFd>(
+        os_facts: &OsFacts,
         mount_fds: Option<&MountFds>,
         dir: &D,
         path: &str,
+        proc_self_fd: &impl AsFd,
     ) -> io::Result<Arc<MountFd>> {
         // Not documented in the man page, but mount FDs must be opened with `O_RDONLY` (not just
         // `O_PATH`)
-        let file = openat(&dir.as_fd(), path, libc::O_RDONLY)
+        let path_c =
+            CString::new(path).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let fd = open_relative_to(os_facts, dir, &path_c, libc::O_RDONLY, None)
             .err_context(|| format!("Failed to open {path}"))?;
-        let st = statx(&file, None).err_context(|| format!("Failed to get {path}'s mount ID"))?;
+
+        // Verify the opened fd is inside the shared directory.
+        // Required when `openat2(2)` is not available.
+        Self::check_path_escape(&fd, dir, proc_self_fd, path)?;
+
+        let st = statx(&fd, None).err_context(|| format!("Failed to get {path}'s mount ID"))?;
 
         if let Some(mount_fds) = mount_fds {
             let mut mfds_locked = mount_fds.map.write().unwrap();
@@ -78,7 +91,7 @@ impl MountFd {
             let mount_fd = Arc::new(MountFd {
                 map: Arc::downgrade(&mount_fds.map),
                 mount_id: st.mnt_id,
-                file,
+                file: fd.into(),
             });
             mfds_locked.insert(st.mnt_id, Arc::downgrade(&mount_fd));
             Ok(mount_fd)
@@ -86,9 +99,33 @@ impl MountFd {
             Ok(Arc::new(MountFd {
                 map: Weak::new(),
                 mount_id: st.mnt_id,
-                file,
+                file: fd.into(),
             }))
         }
+    }
+
+    fn check_path_escape(
+        fd: &impl AsFd,
+        dir: &impl AsFd,
+        proc_self_fd: &impl AsFd,
+        path: &str,
+    ) -> io::Result<()> {
+        let dir_path = get_path_by_fd(dir, proc_self_fd)
+            .map_err(io::Error::from)
+            .err_context(|| "Failed to read shared directory path from '/proc/self/fd'")?;
+        let fd_path = get_path_by_fd(fd, proc_self_fd)
+            .map_err(io::Error::from)
+            .err_context(|| format!("Failed to read {path} path from '/proc/self/fd'"))?;
+
+        let dir_path = Path::new(OsStr::from_bytes(dir_path.to_bytes()));
+        let fd_path = Path::new(OsStr::from_bytes(fd_path.to_bytes()));
+
+        if !fd_path.starts_with(dir_path) {
+            return Err(other_io_error(format!(
+                "Mount path {path:?} resolves outside the shared directory"
+            )));
+        }
+        Ok(())
     }
 
     pub fn file(&self) -> &File {

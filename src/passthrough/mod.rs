@@ -655,14 +655,8 @@ impl PassthroughFs {
         flags: i32,
         mode: Option<u32>,
     ) -> io::Result<OwnedFd> {
-        let dir = dir.as_fd();
-        let flags = libc::O_NOFOLLOW | libc::O_CLOEXEC | flags;
-
-        if self.os_facts.has_openat2 {
-            oslib::do_open_relative_to(&dir, pathname, flags, mode)
-        } else {
-            oslib::openat(&dir, pathname, flags, mode)
-        }
+        let flags = libc::O_NOFOLLOW | flags;
+        util::open_relative_to(&self.os_facts, dir, pathname, flags, mode)
     }
 
     fn find_handle(&self, handle: Handle, inode: Inode) -> io::Result<Arc<HandleData>> {
@@ -932,7 +926,12 @@ impl PassthroughFs {
                 FileOrHandle::File(self.guest_fds.allocate(path_fd)?)
             };
 
-            let mig_info = if self.track_migration_info.load(Ordering::Relaxed) {
+            let mig_info = if self.track_migration_info.load(Ordering::Relaxed)
+                // "." and ".." are not valid names for migration info (required for NFS support).
+                // Unlikely, they probably resolve to inodes already in the store.
+                && name.to_bytes() != b"."
+                && name.to_bytes() != b".."
+            {
                 let parent_strong_ref = StrongInodeReference::new_with_data(p, &self.inodes)?;
                 Some(InodeMigrationInfo::new(
                     &self.cfg,
